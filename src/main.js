@@ -1,5 +1,6 @@
 import { resolveInput, fetchRecentNotes, fetchProfile, npubOf, hasNip07, getNip07PublicKey } from './nostr.js';
 import { buildBrainModel } from './analyze.js';
+import { rangeLabel, activeDayStats, formatDate } from './daterange.js';
 import { renderBrain, exportCanvas } from './brain.js';
 
 const $ = (id) => document.getElementById(id);
@@ -82,11 +83,14 @@ function renderEmpty() {
 }
 
 function describe({ pubkey, usedRelays, events, days, profile, model }) {
-  const first = events[events.length - 1];
-  const last = events[0];
-  const range = events.length
-    ? `${new Date(first.created_at * 1000).toLocaleDateString()} 〜 ${new Date(last.created_at * 1000).toLocaleDateString()}`
-    : '—';
+  // The *requested* window — always the full N days, even on no-post days.
+  const requestedRange = rangeLabel(days);
+
+  // Optional secondary line: the span that actually had posts.
+  const stats = activeDayStats(events);
+  const activeLine = stats
+    ? `<li><b>投稿のあった期間:</b> ${escapeHtml(formatDate(stats.firstSec * 1000))} 〜 ${escapeHtml(formatDate(stats.lastSec * 1000))}（${stats.activeDays} 日に投稿）</li>`
+    : '';
 
   const topList = model
     ? model.terms.slice(0, 12).map((t) => `<span class="chip" style="--c:${chipColor(t.category)}">${escapeHtml(t.term)} <b>${t.count}</b></span>`).join(' ')
@@ -98,7 +102,8 @@ function describe({ pubkey, usedRelays, events, days, profile, model }) {
       <ul>
         <li><b>著者:</b> ${escapeHtml(profile?.display_name || profile?.name || '(プロフィール無し)')} <code>${escapeHtml(npubOf(pubkey))}</code></li>
         <li><b>ノート数:</b> ${events.length} 件（直近 ${days} 日間）</li>
-        <li><b>期間:</b> ${range}</li>
+        <li><b>対象期間（直近 ${days} 日間）:</b> ${escapeHtml(requestedRange)}</li>
+        ${activeLine}
         <li><b>問い合わせたリレー:</b><br>${usedRelays.map((r) => `<code>${escapeHtml(r)}</code>`).join(' ')}</li>
       </ul>
       ${topList ? `<h3>トップ語</h3><div class="chips">${topList}</div>` : ''}

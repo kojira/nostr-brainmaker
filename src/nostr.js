@@ -1,6 +1,7 @@
 // Nostr input decoding + relay fetching (client-side only).
 import { SimplePool } from 'nostr-tools/pool';
 import * as nip19 from 'nostr-tools/nip19';
+import { recentDayWindow } from './daterange.js';
 
 export const DEFAULT_RELAYS = [
   'wss://yabu.me',
@@ -45,7 +46,8 @@ export function resolveInput(raw) {
  */
 export async function fetchRecentNotes(pubkey, { days = 7, relays, limit = 500, timeoutMs = 8000, onProgress } = {}) {
   const usedRelays = (relays && relays.length ? relays : DEFAULT_RELAYS).slice(0, 8);
-  const since = Math.floor(Date.now() / 1000) - days * 24 * 60 * 60;
+  // Calendar-day window: from local midnight (days-1) days ago through now.
+  const since = recentDayWindow(days).sinceSec;
   const pool = new SimplePool();
 
   onProgress?.(`${usedRelays.length} 個のリレーに問い合わせ中…`);
