@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nostr 脳内メーカー</title>
+    <meta name="description" content="Nostr の npub から直近7日間の投稿を取得して、脳内メーカー風の画像を作るブラウザアプリ。" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>" />
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>🧠 Nostr 脳内メーカー</h1>
+      <p>npub / hex / nprofile を入れると、直近の投稿から「あたまの中」を可視化します</p>
+    </header>
+
+    <main>
+      <div class="controls">
+        <input id="npub-input" type="text" placeholder="npub1... / hex pubkey / nprofile1..." autocomplete="off" spellcheck="false" />
+        <select id="days" title="集計期間">
+          <option value="7" selected>直近 7 日</option>
+          <option value="3">直近 3 日</option>
+          <option value="14">直近 14 日</option>
+          <option value="30">直近 30 日</option>
+        </select>
+        <button id="go-btn">脳内をのぞく</button>
+        <button id="export-btn" class="secondary" disabled>画像を保存</button>
+      </div>
+
+      <div id="status" class="status">npub を入れて「脳内をのぞく」を押してください。</div>
+
+      <div class="stage">
+        <div class="canvas-wrap">
+          <canvas id="brain-canvas" width="1000" height="1000" aria-label="脳内メーカーの画像"></canvas>
+        </div>
+        <div id="meta"></div>
+      </div>
+    </main>
+
+    <footer>
+      <p>
+        すべてブラウザ内で動作します（サーバーなし）。データは Nostr リレーから直接取得されます。
+        <br />
+        <a href="https://github.com/kojira/nostr-brainmaker" target="_blank" rel="noreferrer">GitHub</a>
+      </p>
+    </footer>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

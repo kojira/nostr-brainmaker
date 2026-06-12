@@ -1,0 +1,20 @@
+{
+  "name": "nostr-brainmaker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Nostr 脳内メーカー — visualize a Nostr author's last 7 days of posts as a brain-maker-style image.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "nostr-tools": "^2.10.4"
+  },
+  "devDependencies": {
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}
