@@ -73,6 +73,14 @@ button:hover { transform: translateY(-1px); }
 button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 button.secondary { background: #fff; color: var(--pink); border: 2px solid var(--pink); }
 
+.hint {
+  text-align: center;
+  margin: 4px 0 0;
+  color: #8a5a6a;
+  font-size: .85rem;
+}
+.hint a { color: var(--pink-deep); }
+
 .status {
   text-align: center;
   min-height: 1.4em;

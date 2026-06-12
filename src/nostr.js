@@ -91,3 +91,41 @@ export async function fetchProfile(pubkey, { relays, timeoutMs = 6000 } = {}) {
 export function npubOf(pubkey) {
   try { return nip19.npubEncode(pubkey); } catch { return pubkey; }
 }
+
+/**
+ * Feature-detect a NIP-07 browser extension (window.nostr.getPublicKey).
+ * `win` defaults to the global window; pass an object in tests.
+ */
+export function hasNip07(win = (typeof window !== 'undefined' ? window : undefined)) {
+  return !!(win && win.nostr && typeof win.nostr.getPublicKey === 'function');
+}
+
+/**
+ * Validate a hex pubkey returned by a NIP-07 extension and return both its
+ * hex and npub forms. Throws a friendly (Japanese) error on bad input.
+ */
+export function normalizeNip07Pubkey(hex) {
+  const s = String(hex || '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(s)) {
+    throw new Error('拡張機能から不正な公開鍵が返されました。');
+  }
+  return { hex: s, npub: npubOf(s) };
+}
+
+/**
+ * Obtain the public key from a NIP-07 extension via window.nostr.getPublicKey().
+ * Returns { hex, npub }. Throws a friendly (Japanese) error if no extension is
+ * present or the request is rejected.
+ */
+export async function getNip07PublicKey(win = (typeof window !== 'undefined' ? window : undefined)) {
+  if (!hasNip07(win)) {
+    throw new Error('NIP-07 拡張機能が見つかりません。Alby や nos2x などをインストールしてから再度お試しください。');
+  }
+  let hex;
+  try {
+    hex = await win.nostr.getPublicKey();
+  } catch {
+    throw new Error('拡張機能から公開鍵を取得できませんでした（許可が拒否された可能性があります）。');
+  }
+  return normalizeNip07Pubkey(hex);
+}

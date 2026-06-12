@@ -1,10 +1,11 @@
-import { resolveInput, fetchRecentNotes, fetchProfile, npubOf } from './nostr.js';
+import { resolveInput, fetchRecentNotes, fetchProfile, npubOf, hasNip07, getNip07PublicKey } from './nostr.js';
 import { buildBrainModel } from './analyze.js';
 import { renderBrain, exportCanvas } from './brain.js';
 
 const $ = (id) => document.getElementById(id);
 const input = $('npub-input');
 const goBtn = $('go-btn');
+const nip07Btn = $('nip07-btn');
 const exportBtn = $('export-btn');
 const statusEl = $('status');
 const metaEl = $('meta');
@@ -111,10 +112,35 @@ function chipColor(cat) {
   }[cat] || '#8a8f99';
 }
 
+async function useNip07() {
+  nip07Btn.disabled = true;
+  const original = nip07Btn.textContent;
+  nip07Btn.textContent = '取得中…';
+  try {
+    setStatus('NIP-07 拡張機能から公開鍵を取得中…');
+    const { npub } = await getNip07PublicKey();
+    input.value = npub;
+    setStatus('公開鍵を取得しました。脳内を解析します…', 'ok');
+    await run();
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message || String(err), 'error');
+  } finally {
+    nip07Btn.disabled = false;
+    nip07Btn.textContent = original;
+  }
+}
+
 goBtn.addEventListener('click', run);
+nip07Btn.addEventListener('click', useNip07);
 input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') run();
 });
+
+// Surface whether a NIP-07 extension is available (best-effort hint only).
+if (!hasNip07()) {
+  nip07Btn.title = 'NIP-07 対応のブラウザ拡張機能が必要です';
+}
 exportBtn.addEventListener('click', () => {
   const safe = lastName.replace(/[^\w぀-ヿ一-鿿-]/g, '_').slice(0, 24) || 'nostr';
   exportCanvas(canvas, `nostr-brain-${safe}.png`);

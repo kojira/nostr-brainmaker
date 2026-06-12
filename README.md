@@ -14,6 +14,8 @@ No backend. No server. Everything runs in the browser and deploys to GitHub Page
 ## Features
 
 - Accepts **npub**, **hex pubkey**, or **nprofile** (relay hints in an nprofile are used).
+- **NIP-07**: one-click "NIP-07 から取得" fetches your public key from a browser
+  extension (Alby, nos2x, …) via `window.nostr.getPublicKey()` and fills the input.
 - Fetches `kind:1` notes from the last 3 / 7 / 14 / 30 days via `nostr-tools` `SimplePool`.
 - Heuristic tokenization (Latin words + Japanese runs & bigrams) with a stopword list and frequency analysis.
 - Words placed inside a hand-drawn brain, sized by frequency and colored by category
