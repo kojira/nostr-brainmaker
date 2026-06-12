@@ -102,7 +102,7 @@ The published URL is `https://<user>.github.io/<repo-name>/`.
   It's tuned to be *fun and usable*, not linguistically precise.
 - Relay availability varies; if no notes are found, try a different period or an
   identity with public relay activity. Default relays:
-  `relay.damus.io`, `nos.lol`, `relay.nostr.band`, `relay.primal.net`, `yabu.me`.
+  `yabu.me`, `r.kojira.io`, `x.kojira.io`.
 - All processing is local; nothing is sent to any server other than the public
   Nostr relays you query.
 

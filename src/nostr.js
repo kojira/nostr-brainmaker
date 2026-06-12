@@ -3,11 +3,9 @@ import { SimplePool } from 'nostr-tools/pool';
 import * as nip19 from 'nostr-tools/nip19';
 
 export const DEFAULT_RELAYS = [
-  'wss://relay.damus.io',
-  'wss://nos.lol',
-  'wss://relay.nostr.band',
-  'wss://relay.primal.net',
   'wss://yabu.me',
+  'wss://r.kojira.io',
+  'wss://x.kojira.io',
 ];
 
 /**
