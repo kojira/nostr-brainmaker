@@ -2,12 +2,9 @@
 
 /** 設計ドキュメントのリレー構成。 */
 export const RELAYS = [
-  'wss://relay.nostr.band',
   'wss://yabu.me',
   'wss://r.kojira.io',
-  'wss://relay-jp.nostr.wirednet.jp',
-  'wss://nos.lol',
-  'wss://relay.damus.io',
+  'wss://x.kojira.io',
 ];
 
 /**

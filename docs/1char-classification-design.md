@@ -69,7 +69,7 @@
 
 ### リレーミックス
 - 大規模アグリゲータ + 日本語圏リレーを混在させ、同一投稿を複数経路から拾えるようにする。
-  - 例: `wss://relay.nostr.band`, `wss://yabu.me`, `wss://r.kojira.io`, `wss://relay-jp.nostr.wirednet.jp`, `wss://nos.lol`, `wss://relay.damus.io`。
+  - 例: `wss://yabu.me`, `wss://r.kojira.io`, `wss://x.kojira.io`。
 - 取得は kind:1（テキストノート）中心。各リレーから独立に収集し、後段の dedupe で統合する。
 
 ### タイムスライス（期間分散）
