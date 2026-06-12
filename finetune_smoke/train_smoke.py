@@ -59,7 +59,9 @@ def main():
     ap.add_argument("--max-steps", type=int, default=10)
     ap.add_argument("--batch-size", type=int, default=4)
     ap.add_argument("--max-length", type=int, default=128)
-    ap.add_argument("--lr", type=float, default=5e-5)
+    # Conservative LR: a tiny smoke run does not need 5e-5, and a smaller step
+    # reduces the chance of a blow-up dominating these few steps.
+    ap.add_argument("--lr", type=float, default=1e-5)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -91,8 +93,15 @@ def main():
     # Model + tokenizer -------------------------------------------------------
     log("MODEL", f"loading tokenizer + model {args.model} (num_labels={num_labels})")
     tokenizer = AutoTokenizer.from_pretrained(args.model)
+    # Force the eager attention path. ModernBERT's flash/SDPA kernels have been a
+    # source of NaN logits on some torch/transformers combos; eager attention is
+    # the conservative choice for a tiny smoke run and avoids that instability.
+    # Keep everything in float32 (no autocast / no fp16) for numerical safety.
     model = AutoModelForSequenceClassification.from_pretrained(
-        args.model, num_labels=num_labels
+        args.model,
+        num_labels=num_labels,
+        attn_implementation="eager",
+        torch_dtype=torch.float32,
     )
     model.to(device)
     model.train()
@@ -128,6 +137,11 @@ def main():
         loss = outputs.loss
         if step == 0:
             log("FORWARD", f"logits shape={tuple(outputs.logits.shape)} (batch x num_labels)")
+        # Explicit finite-loss guard: a NaN/Inf loss means the run is broken, so
+        # fail loudly with a nonzero exit instead of reporting a false success.
+        if not torch.isfinite(loss):
+            log("WARN", f"non-finite loss at step {step}: loss={loss.item()} -- aborting")
+            sys.exit(2)
         log("LOSS", f"step {step}: loss={loss.item():.4f}")
 
         # 5) BACKWARD ---------------------------------------------------------
