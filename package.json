@@ -9,9 +9,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:live": "vitest run --config vitest.live.config.js"
+    "test:live": "vitest run --config vitest.live.config.js",
+    "collect": "node scripts/collect.js",
+    "label": "node scripts/label.js"
   },
   "dependencies": {
+    "ajv": "^8.20.0",
+    "franc": "^6.2.0",
     "nostr-tools": "^2.10.4"
   },
   "devDependencies": {

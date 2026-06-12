@@ -1,0 +1,20 @@
+# Smoke-test deps for the 1-char classifier finetune.
+# Targets the existing remote A100 box: Python 3.10, driver 560.xx.
+#
+# torch is pinned EXACTLY to 2.3.1. A loose floor (e.g. torch>=2.2) lets pip
+# resolve a very recent wheel — we previously got torch 2.12.0+cu130, whose
+# bundled CUDA 13 runtime cannot initialize against the host's 560.xx driver,
+# so the run silently fell back to CPU. 2.3.1 matches the remote snapshot and
+# ships a CUDA 12 runtime that the driver supports.
+torch==2.3.1
+# ruri-v3-pt-30m is a ModernBERT encoder; ModernBERT support landed in
+# transformers 4.48, so pin to 4.48.x (the remote requirements.finetune.txt
+# uses 4.41.2, which is too old for ModernBERT).
+transformers==4.48.3
+# ModernBERT / ruri-v3 ship a fast tokenizer; pin a compatible 0.21.x.
+tokenizers==0.21.0
+# Some HF tokenizers/conversions need these.
+sentencepiece==0.2.0
+protobuf==4.25.3
+# safetensors is used by save_pretrained for the checkpoint.
+safetensors==0.4.5

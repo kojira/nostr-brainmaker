@@ -87,6 +87,27 @@ For a custom base path (e.g. custom domain at root):
 BASE_PATH=/ npm run build
 ```
 
+## Production labeling pipeline
+
+Offline Node scripts (separate from the browser app) to build a labeled dataset:
+collect/curate Japanese `kind:1` notes from multiple relays, then label them with
+the Gemini API into the 46-label "1-character" set.
+
+```bash
+npm run collect              # collect raw notes → filter/sample → data/production/approved-notes.json
+npm run collect -- --dry-run # print the plan, no network
+
+export GEMINI_API_KEY=...    # or put it in a .env file at the repo root
+npm run label                # label approved notes → data/production/labels/
+npm run label -- --dry-run   # validate config, no API calls
+```
+
+Outputs land under `data/production/` (raw notes, approved set, labels, raw
+Gemini logs, reports). See [docs/production-pipeline.md](docs/production-pipeline.md)
+for all options, resume/checkpointing, and the second-pass refinement, and
+[docs/1char-classification-design.md](docs/1char-classification-design.md) for
+the label-set design.
+
 ## Deploy (GitHub Pages)
 
 Deployment is automated via GitHub Actions (`.github/workflows/deploy.yml`):
