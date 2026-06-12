@@ -40,28 +40,71 @@ export function resolveInput(raw) {
 }
 
 /**
+ * One bounded relay query. Resolves to the merged events, or [] if the relays
+ * are too slow. The timeout timer is always cleared so it never lingers.
+ */
+async function queryPage(pool, relays, filter, timeoutMs) {
+  let timer;
+  const guard = new Promise((resolve) => {
+    timer = setTimeout(() => resolve([]), timeoutMs + 1500);
+  });
+  try {
+    return await Promise.race([
+      pool.querySync(relays, filter, { maxWait: timeoutMs }),
+      guard,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Fetch kind:1 notes authored by `pubkey` within the last `days` days.
  * Returns { events, relays } where events are sorted newest-first and deduped.
+ *
+ * A single capped query can only return the most-recent `limit` notes, which
+ * makes a busy author's 7-day and 30-day windows collapse to the same slice.
+ * We instead page backwards in time using `until`: each round fetches up to
+ * `limit` notes, then the next round queries strictly older than the oldest
+ * note seen so far, until the window is exhausted (or `maxPages` is hit).
  * `onProgress(msg)` is optional.
  */
-export async function fetchRecentNotes(pubkey, { days = 7, relays, limit = 500, timeoutMs = 8000, onProgress } = {}) {
+export async function fetchRecentNotes(pubkey, { days = 7, relays, limit = 500, timeoutMs = 8000, maxPages = 20, onProgress } = {}) {
   const usedRelays = (relays && relays.length ? relays : DEFAULT_RELAYS).slice(0, 8);
   // Calendar-day window: from local midnight (days-1) days ago through now.
-  const since = recentDayWindow(days).sinceSec;
+  const win = recentDayWindow(days);
+  const since = win.sinceSec;
   const pool = new SimplePool();
 
   onProgress?.(`${usedRelays.length} 個のリレーに問い合わせ中…`);
 
-  const filter = { kinds: [1], authors: [pubkey], since, limit };
   const seen = new Map();
+  let until = win.untilSec; // inclusive upper bound; walked backwards each page.
 
   try {
-    const events = await Promise.race([
-      pool.querySync(usedRelays, filter, { maxWait: timeoutMs }),
-      new Promise((resolve) => setTimeout(() => resolve([]), timeoutMs + 1500)),
-    ]);
-    for (const ev of events || []) {
-      if (ev && ev.created_at >= since) seen.set(ev.id, ev);
+    for (let page = 0; page < maxPages; page++) {
+      const filter = { kinds: [1], authors: [pubkey], since, until, limit };
+      const events = await queryPage(pool, usedRelays, filter, timeoutMs);
+
+      let added = 0;
+      let oldest = until;
+      for (const ev of events || []) {
+        if (!ev || ev.created_at < since || ev.created_at > until) continue;
+        if (ev.created_at < oldest) oldest = ev.created_at;
+        if (!seen.has(ev.id)) { seen.set(ev.id, ev); added++; }
+      }
+
+      onProgress?.(`${seen.size} 件のノートを取得（${page + 1} ページ目）…`);
+
+      // Stop when the relays returned less than a full page (window exhausted)
+      // or when this round surfaced nothing new (duplicates / no older notes).
+      if ((events || []).length < limit || added === 0) break;
+
+      // Next page: strictly older than the oldest note we have. Bail if this
+      // would not make progress or would fall out of the requested window.
+      const next = oldest - 1;
+      if (next < since || next >= until) break;
+      until = next;
     }
   } finally {
     try { pool.close(usedRelays); } catch { /* ignore */ }
