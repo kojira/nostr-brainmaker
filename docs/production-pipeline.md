@@ -119,3 +119,51 @@ always preserved, never overwritten.
 workers; `--concurrency` bounds simultaneous in-flight requests. Keep
 `concurrency <= rpm`. The Gemini client also self-throttles on 429 via backoff
 and `Retry-After`, so transient quota hits recover automatically.
+
+## Stage 3 — Streaming balanced pipeline (`npm run pipeline`)
+
+`scripts/pipeline.js` reframes collect+label as a single **producer → language
+filter → bounded queue → parallel labeling workers** flow whose goal is coverage:
+keep going **until all 46 labels have ≥ `--min` (default 50) labeled items**. The
+older `collect`/`label` commands are unchanged; this is an additive command.
+
+Design (reusable modules under `scripts/lib/`):
+
+- `pipeline-state.js` — `PipelineState`: per-label counts, `seen` set (event_id),
+  `recordLabeled` (handles relabel decrement), `labelsBelow(min)`, `isComplete(min)`.
+  `PipelineState.fromCheckpoint(records)` seeds counts from existing
+  `labels/checkpoint.jsonl` (last `ok:true` per `event_id` wins) and marks every
+  attempted id `seen` so it is never relabeled. The QA label `分類不能` is tracked
+  separately and never gates completion.
+- `async-queue.js` — `AsyncQueue` with backpressure (`highWaterMark`) and a
+  `QUEUE_DONE` sentinel; multi-consumer safe.
+- `raw-source.js` — `rawFileSource(path)` async-iterates the existing
+  `raw/raw-notes.jsonl`; `relaySource(cfg)` streams fresh `kind:1` notes from
+  relays (only with `--allow-network`); `concatSources(...)` chains them.
+- `pipeline.js` (`runPipeline`) — the orchestrator. One producer pulls from the
+  source, applies `detectJapanese` (the repo's real `franc`-based policy), drops
+  non-Japanese and already-`seen` ids, and pushes survivors onto the queue;
+  `--concurrency` workers pull and label via the shared `labelOne`
+  (`scripts/lib/labeler.js`, extracted from `label.js`) with a `RateLimiter`.
+  Workers label **every** item they dequeue (no capping/discarding); only the
+  producer stops early once `isComplete(min)`.
+- `pipeline-report.js` — `buildPipelineReport` / `renderProgress` for the
+  reporting outputs.
+
+Resume / reuse: seeded from `checkpoint.jsonl` (+ `gemini-labels.json` merge), so
+re-running continues from prior progress and skips done ids. Each labeled item is
+appended to `checkpoint.jsonl` and `gemini-labeling-log.jsonl` as it completes.
+After the run, `gemini-labels.json`, `labeling-report.json`, and the new
+`pipeline-report.json` are rebuilt from the **full** (existing + new) state.
+
+Progress/reporting surfaces: raw fetched, language-pass / language-excluded,
+queue length, per-label counts, labels still below target, and labeling
+success/failure counts.
+
+### Count / report command (`npm run report:labels`)
+
+`scripts/report-labels.js` reads `labels/checkpoint.jsonl` (and merges
+`gemini-labels.json` if present) and prints a per-label table with `OK`/`need N`
+status, the list of labels below target, the `分類不能` count, and totals.
+`--json` / `--out <path>` emit the machine-readable `pipeline-report.json` shape.
+No network or API calls.

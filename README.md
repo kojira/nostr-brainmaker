@@ -102,6 +102,31 @@ npm run label                # label approved notes → data/production/labels/
 npm run label -- --dry-run   # validate config, no API calls
 ```
 
+### Streaming pipeline (collect → filter → queue → parallel label)
+
+The serial `collect`/`label` commands above still work. For building a *balanced*
+dataset there is also a single streaming pipeline that keeps feeding notes through
+a queue into parallel labeling workers **until every one of the 46 labels has at
+least `--min` (default 50) labeled items**:
+
+```bash
+npm run report:labels            # per-label counts, labels still below target (no network)
+npm run pipeline -- --dry-run    # plan + seeded counts from existing data (no network/API)
+npm run pipeline                 # offline: replay data/production/raw/raw-notes.jsonl
+npm run pipeline -- --allow-network   # also fetch fresh notes from relays when raw runs dry
+```
+
+It reuses existing `labels/checkpoint.jsonl` (+ `gemini-labels.json`) as the
+**initial counts**, never relabels an already-seen `event_id` (dedup by id), and
+**never caps or discards** items once a label passes the target — downsampling is
+a separate later step. The producer stops fetching once all labels reach the
+target; in-flight/queued items are still labeled. Progress reporting shows raw
+fetched, language-pass, queue length, per-label counts, labels below target, and
+labeling success/failure. Outputs extend (not overwrite) `gemini-labels.json`,
+`labeling-report.json`, and add `pipeline-report.json`. Key options:
+`--min 50`, `--concurrency 5`, `--rpm 60`, `--raw <jsonl>`, `--allow-network`,
+`--resume` (default ON), `--dry-run`.
+
 Outputs land under `data/production/` (raw notes, approved set, labels, raw
 Gemini logs, reports). See [docs/production-pipeline.md](docs/production-pipeline.md)
 for all options, resume/checkpointing, and the second-pass refinement, and
