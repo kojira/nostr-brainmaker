@@ -111,21 +111,25 @@ least `--min` (default 50) labeled items**:
 
 ```bash
 npm run report:labels            # per-label counts, labels still below target (no network)
-npm run pipeline -- --dry-run    # plan + seeded counts from existing data (no network/API)
+npm run pipeline -- --dry-run    # plan + fresh-run counts (use --seed-existing-labels to reuse existing labels)
 npm run pipeline                 # offline: replay data/production/raw/raw-notes.jsonl
 npm run pipeline -- --allow-network   # also fetch fresh notes from relays when raw runs dry
 ```
 
-It reuses existing `labels/checkpoint.jsonl` (+ `gemini-labels.json`) as the
-**initial counts**, never relabels an already-seen `event_id` (dedup by id), and
-**never caps or discards** items once a label passes the target — downsampling is
-a separate later step. The producer stops fetching once all labels reach the
-target; in-flight/queued items are still labeled. Progress reporting shows raw
-fetched, language-pass, queue length, per-label counts, labels below target, and
-labeling success/failure. Outputs extend (not overwrite) `gemini-labels.json`,
+By default each run is a **fresh** count: completion counts start at zero. It still
+reads `labels/checkpoint.jsonl` (a labeling progress/resume log — **not** a model
+checkpoint) and `gemini-labels.json` to dedup already-seen `event_id`s (never
+relabeled) and to preserve their items in the rebuilt output, but those existing
+labels do **not** seed the `--min` targets. Pass `--seed-existing-labels` to opt
+into reusing them as initial counts (resume a prior run's progress). It **never
+caps or discards** items once a label passes the target — downsampling is a
+separate later step. The producer stops fetching once all labels reach the target;
+in-flight/queued items are still labeled. Progress reporting shows raw fetched,
+language-pass, queue length, per-label counts, labels below target, and labeling
+success/failure. Outputs extend (not overwrite) `gemini-labels.json`,
 `labeling-report.json`, and add `pipeline-report.json`. Key options:
 `--min 50`, `--concurrency 5`, `--rpm 60`, `--raw <jsonl>`, `--allow-network`,
-`--resume` (default ON), `--dry-run`.
+`--seed-existing-labels` (default OFF), `--resume` (default ON), `--dry-run`.
 
 Outputs land under `data/production/` (raw notes, approved set, labels, raw
 Gemini logs, reports). See [docs/production-pipeline.md](docs/production-pipeline.md)

@@ -16,7 +16,7 @@ import { makeGeminiLabeler, loadEnvKey } from './lib/labeler.js';
 import { buildPipelineReport, renderProgress } from './lib/pipeline-report.js';
 import { RELAYS } from './lib/relays.js';
 
-function parseCliArgs(argv) {
+export function parseCliArgs(argv) {
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -32,6 +32,7 @@ function parseCliArgs(argv) {
       'allow-network': { type: 'boolean', default: false },
       'resume': { type: 'boolean', default: true },
       'no-resume': { type: 'boolean', default: false },
+      'seed-existing-labels': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       'window-days': { type: 'string', default: '120' },
       'slice-days': { type: 'string', default: '3' },
@@ -55,6 +56,7 @@ function parseCliArgs(argv) {
     highWaterMark: Number(values['high-water-mark']),
     allowNetwork: values['allow-network'],
     resume: values['no-resume'] ? false : values['resume'],
+    seedExistingLabels: values['seed-existing-labels'],
     dryRun: values['dry-run'],
     windowDays: Number(values['window-days']),
     sliceDays: Number(values['slice-days']),
@@ -66,14 +68,17 @@ function parseCliArgs(argv) {
   };
 }
 
-/** state を既存の gemini-labels.json から（未登録分のみ）補完する。 */
-function mergeExistingLabels(state, labelsJsonPath) {
+/**
+ * state を既存の gemini-labels.json から（未登録分のみ）補完する。
+ * countExisting=true のときだけ完了カウントに加算し、それ以外は出力保持＋seen(dedup) のみ。
+ */
+export function mergeExistingLabels(state, labelsJsonPath, { countExisting = true } = {}) {
   const doc = readJson(labelsJsonPath);
   if (!doc || !Array.isArray(doc.items)) return;
   for (const it of doc.items) {
     if (!it || it.event_id == null) continue;
     if (state.labeledByEvent.has(it.event_id)) continue;
-    state.recordLabeled(it);
+    state.seedLabeled(it, { countExisting });
   }
 }
 
@@ -142,18 +147,23 @@ export async function main() {
   const labelsJsonPath = join(labelsDir, 'gemini-labels.json');
   const minPerLabel = cfg.min;
 
-  // state シード。
+  // state シード。既定（fresh run）では既存アーティファクトを完了カウントの種にしない。
+  // --seed-existing-labels 指定時のみ既存ラベルを完了カウントに加算する。
+  // どちらの場合も既存 event_id は seen 扱い(dedup)＋出力保持される（非破壊）。
+  const countExisting = cfg.seedExistingLabels;
   const state = cfg.resume
-    ? PipelineState.fromCheckpoint(readJsonl(checkpointPath))
+    ? PipelineState.fromCheckpoint(readJsonl(checkpointPath), { countExisting })
     : new PipelineState();
-  // 既存の gemini-labels.json をマージ（未登録分のみ、seen にもする）。
-  mergeExistingLabels(state, labelsJsonPath);
+  // 既存の gemini-labels.json をマージ（未登録分のみ、seen＋出力保持。
+  // 完了カウントへの加算は countExisting=true のときだけ）。
+  mergeExistingLabels(state, labelsJsonPath, { countExisting });
 
   if (cfg.dryRun) {
     const below = state.labelsBelow(minPerLabel);
     const plan = {
       mode: 'dry-run',
       min: minPerLabel,
+      seed_existing_labels: cfg.seedExistingLabels,
       concurrency: cfg.concurrency,
       already_labeled_total: state.totalLabeled(),
       labels_below_count: below.length,
@@ -220,7 +230,7 @@ export async function main() {
     },
   };
 
-  log.info(`pipeline 開始: min=${minPerLabel} already=${state.totalLabeled()} allow_network=${cfg.allowNetwork}`);
+  log.info(`pipeline 開始: min=${minPerLabel} seed_existing_labels=${cfg.seedExistingLabels} preexisting=${state.totalLabeled()} allow_network=${cfg.allowNetwork}`);
 
   const result = await runPipeline({
     source,
@@ -258,6 +268,7 @@ export async function main() {
   process.stdout.write(renderProgress({ state, stats, minPerLabel, queueSize: 0 }) + '\n');
   const below = state.labelsBelow(minPerLabel);
   process.stdout.write(`complete: ${result.complete}\n`);
+  process.stdout.write(`seed_existing_labels: ${cfg.seedExistingLabels}\n`);
   process.stdout.write(`total_labeled: ${state.totalLabeled()}\n`);
   process.stdout.write(`labels_below_target(${minPerLabel}): ${below.length}\n`);
   process.stdout.write(`failures: ${failures.length}\n`);

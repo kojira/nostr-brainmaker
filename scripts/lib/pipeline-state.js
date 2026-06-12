@@ -14,15 +14,18 @@ export class PipelineState {
 
   /**
    * checkpoint レコード列から state を構築する。
-   * ok:true は recordLabeled、ok:true/false いずれも event_id を seen にする。
+   * ok:true は seedLabeled、ok:true/false いずれも event_id を seen にする。
    * 同一 event_id の最後の ok:true が勝つ（recordLabeled が relabel を処理）。
+   * countExisting=true（既定）は既存ラベルを完了カウントに加算する。
+   * countExisting=false は出力保持＋dedup(seen) のみで完了カウントを 0 のまま据え置く
+   * （新規ランをゼロから数えるため）。
    */
-  static fromCheckpoint(records, { labels = LABELS } = {}) {
+  static fromCheckpoint(records, { labels = LABELS, countExisting = true } = {}) {
     const state = new PipelineState({ labels });
     for (const rec of records || []) {
       if (!rec || rec.event_id == null) continue;
       if (rec.ok === true) {
-        state.recordLabeled(rec);
+        state.seedLabeled(rec, { countExisting });
       } else {
         // ok:false でも seen 扱いにして再ラベルしない。
         state.markSeen(rec.event_id);
@@ -54,6 +57,21 @@ export class PipelineState {
     if (!isReplacementSameLabel) {
       this._bump(labeled.label, +1);
     }
+  }
+
+  /**
+   * 既存アーティファクト（checkpoint / gemini-labels.json）から取り込む。
+   * countExisting=true（既定）は recordLabeled と同じく完了カウントに加算する。
+   * countExisting=false は出力保持と dedup(seen) のためだけに保存し、完了カウント
+   * （_counts）は触らない（新規ランをゼロから数えるため）。
+   */
+  seedLabeled(labeled, { countExisting = true } = {}) {
+    if (countExisting) {
+      this.recordLabeled(labeled);
+      return;
+    }
+    this.labeledByEvent.set(labeled.event_id, labeled);
+    this.markSeen(labeled.event_id);
   }
 
   hasSeen(id) {

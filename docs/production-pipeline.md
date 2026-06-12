@@ -104,7 +104,8 @@ Outputs (under `--out-dir`):
 - `gemini-labeling-log.jsonl` — **raw prompts + raw Gemini responses**, appended
   (preserved); pass-2 lines carry `"pass":2`.
 - `gemini-labeling-failures.json` — `{count, items:[{event_id, reason, attempts}]}`.
-- `checkpoint.jsonl` — resume state, flushed after every item.
+- `checkpoint.jsonl` — labeling progress / resume log (a JSONL append of per-item
+  labeling outcomes, **not** a model checkpoint), flushed after every item.
 - `labeling-report.json` — label counts, confidence stats/buckets, uncertain
   count, pass-2 count, needs-human-review count.
 
@@ -131,9 +132,13 @@ Design (reusable modules under `scripts/lib/`):
 
 - `pipeline-state.js` — `PipelineState`: per-label counts, `seen` set (event_id),
   `recordLabeled` (handles relabel decrement), `labelsBelow(min)`, `isComplete(min)`.
-  `PipelineState.fromCheckpoint(records)` seeds counts from existing
-  `labels/checkpoint.jsonl` (last `ok:true` per `event_id` wins) and marks every
-  attempted id `seen` so it is never relabeled. The QA label `分類不能` is tracked
+  `PipelineState.fromCheckpoint(records, { countExisting })` reads existing
+  `labels/checkpoint.jsonl` (a labeling progress/resume log, **not** a model
+  checkpoint; last `ok:true` per `event_id` wins) and marks every attempted id
+  `seen` so it is never relabeled. By default (`countExisting:false`) those
+  existing records are preserved for output and dedup only and do **not** seed
+  completion counts; with `--seed-existing-labels` they count toward the targets.
+  The QA label `分類不能` is tracked
   separately and never gates completion.
 - `async-queue.js` — `AsyncQueue` with backpressure (`highWaterMark`) and a
   `QUEUE_DONE` sentinel; multi-consumer safe.
@@ -150,11 +155,17 @@ Design (reusable modules under `scripts/lib/`):
 - `pipeline-report.js` — `buildPipelineReport` / `renderProgress` for the
   reporting outputs.
 
-Resume / reuse: seeded from `checkpoint.jsonl` (+ `gemini-labels.json` merge), so
-re-running continues from prior progress and skips done ids. Each labeled item is
-appended to `checkpoint.jsonl` and `gemini-labeling-log.jsonl` as it completes.
+Fresh run by default: completion counts start at **zero** every run. Existing
+`checkpoint.jsonl` (a labeling progress/resume log — not a model checkpoint) and
+`gemini-labels.json` are still read so their `event_id`s are marked `seen` (never
+relabeled) and their items are preserved in the rebuilt output — but they do
+**not** count toward the `--min` targets. Pass `--seed-existing-labels` to opt into
+the old behavior where existing labels seed the completion counts (resume a prior
+run's progress). Each labeled item is appended to `checkpoint.jsonl` and
+`gemini-labeling-log.jsonl` as it completes; existing artifacts are never deleted.
 After the run, `gemini-labels.json`, `labeling-report.json`, and the new
-`pipeline-report.json` are rebuilt from the **full** (existing + new) state.
+`pipeline-report.json` are rebuilt from the **full** (preserved existing + new)
+state.
 
 Progress/reporting surfaces: raw fetched, language-pass / language-excluded,
 queue length, per-label counts, labels still below target, and labeling

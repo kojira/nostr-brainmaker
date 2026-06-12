@@ -90,4 +90,45 @@ describe('PipelineState', () => {
     expect(s.isComplete(2)).toBe(false);
     expect(s.isComplete(0)).toBe(true);
   });
+
+  it('fromCheckpoint with countExisting:false does NOT seed completion counts (fresh run)', () => {
+    const records = [
+      { ok: true, ...mkLabeled('e1', LABELS[0]) },
+      { ok: true, ...mkLabeled('e2', LABELS[0]) },
+      { ok: false, event_id: 'e3', reason: 'transport' },
+    ];
+    const s = PipelineState.fromCheckpoint(records, { countExisting: false });
+    // completion counts start at zero — existing artifacts are not a seed
+    expect(s.counts()[LABELS[0]]).toBe(0);
+    expect(s.isComplete(1)).toBe(false);
+    // but items are preserved for output and ids are deduped (non-destructive)
+    expect(s.totalLabeled()).toBe(2);
+    expect(s.hasSeen('e1')).toBe(true);
+    expect(s.hasSeen('e2')).toBe(true);
+    expect(s.hasSeen('e3')).toBe(true);
+    expect(s.labeledByEvent.get('e1').label).toBe(LABELS[0]);
+  });
+
+  it('fromCheckpoint default (countExisting:true) DOES seed completion counts (opt-in reuse)', () => {
+    const records = [
+      { ok: true, ...mkLabeled('e1', LABELS[0]) },
+      { ok: true, ...mkLabeled('e2', LABELS[0]) },
+    ];
+    const s = PipelineState.fromCheckpoint(records, { countExisting: true });
+    expect(s.counts()[LABELS[0]]).toBe(2);
+    // seeded label has reached its target (other labels remain below, so the
+    // overall run is not yet complete — isComplete checks all 46 labels)
+    expect(s.labelsBelow(2).find((b) => b.label === LABELS[0])).toBeUndefined();
+  });
+
+  it('seedLabeled(countExisting:false) preserves + dedups without counting; fresh labels still count', () => {
+    const s = new PipelineState();
+    s.seedLabeled(mkLabeled('e1', LABELS[0]), { countExisting: false });
+    expect(s.counts()[LABELS[0]]).toBe(0);
+    expect(s.totalLabeled()).toBe(1);
+    expect(s.hasSeen('e1')).toBe(true);
+    // a real (this-run) label still counts toward the target
+    s.recordLabeled(mkLabeled('e2', LABELS[0]));
+    expect(s.counts()[LABELS[0]]).toBe(1);
+  });
 });
