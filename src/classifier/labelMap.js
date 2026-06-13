@@ -50,8 +50,9 @@ export function aggregateLabels(perPost, indexed) {
   const total = perPost.length;
   if (total === 0) return [];
   const counts = new Map();
-  for (const { index } of perPost) {
-    counts.set(index, (counts.get(index) || 0) + 1);
+  for (const post of perPost) {
+    const labelIndex = post.id ?? post.index;
+    counts.set(labelIndex, (counts.get(labelIndex) || 0) + 1);
   }
   const out = [];
   for (const [index, count] of counts) {

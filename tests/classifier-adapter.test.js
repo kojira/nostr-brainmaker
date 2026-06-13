@@ -77,9 +77,46 @@ describe('createClassifier', () => {
     const result = await c.classifyPosts(['aaa', 'b', 'aaa']);
     expect(result.mode).toBe('classifier');
     expect(result.posts).toBe(3);
+    expect(result.perPost).toHaveLength(3);
+    expect(result.perPost[0]).toMatchObject({
+      sourceIndex: 0,
+      char: expect.any(String),
+      id: expect.any(Number),
+      prob: expect.any(Number),
+    });
+    expect(result.perPost[0].char).toHaveLength(1);
+    expect(result.perPost[2].char).toBe(result.perPost[0].char);
     expect(result.labels.length).toBeGreaterThan(0);
     const totalCount = result.labels.reduce((a, l) => a + l.count, 0);
     expect(totalCount).toBe(3);
+  });
+
+  it('skips empty normalized posts without collapsing repeated labels', async () => {
+    const backendFactory = () => ({
+      async load() {},
+      async infer() {
+        const logits = new Array(47).fill(0);
+        logits[0] = 5;
+        return logits;
+      },
+      dispose() {},
+    });
+
+    const c = createClassifier({
+      fetchImpl: fetchReturning(manifestWithInlineMap()),
+      backendFactory,
+    });
+    await c.init();
+
+    const result = await c.classifyPosts(['愛してる', '   ', 'https://example.com', '愛してる']);
+    expect(result.posts).toBe(2);
+    expect(result.perPost).toEqual([
+      expect.objectContaining({ sourceIndex: 0, id: 0, char: '愛' }),
+      expect.objectContaining({ sourceIndex: 3, id: 0, char: '愛' }),
+    ]);
+    expect(result.labels).toEqual([
+      expect.objectContaining({ id: 0, char: '愛', count: 2 }),
+    ]);
   });
 
   it('uses the supplied app base URL for manifest and backend assets', async () => {

@@ -1,7 +1,6 @@
 import { resolveInput, fetchRecentNotes, fetchProfile, npubOf, hasNip07, getNip07PublicKey } from './nostr.js';
-import { buildBrainModel } from './analyze.js';
 import { rangeLabel, activeDayStats, formatDate } from './daterange.js';
-import { renderBrain, exportCanvas } from './brain.js';
+import { renderBrainFromPosts, exportCanvas } from './brain.js';
 import { createClassifier } from './classifier/adapter.js';
 import { registerDefaultBackends } from './classifier/backends/transformersjs.js';
 
@@ -17,9 +16,6 @@ const daysSel = $('days');
 
 let lastName = 'anonymous';
 
-// Optional trained-classifier seam. When model artifacts are missing or fail to
-// load we now surface that unavailable/error state explicitly instead of
-// pretending a heuristic classifier path succeeded.
 registerDefaultBackends();
 const classifier = createClassifier({ baseUrl: import.meta.env.BASE_URL });
 const classifierReady = classifier.init();
@@ -35,12 +31,22 @@ function escapeHtml(s) {
   ));
 }
 
+async function requireClassifierReady() {
+  const state = await classifierReady;
+  if (state !== 'ready') {
+    throw new Error(`学習済み分類器を初期化できません: ${classifier.reason || 'unknown error'}`);
+  }
+}
+
 async function run() {
   goBtn.disabled = true;
   exportBtn.disabled = true;
   metaEl.innerHTML = '';
   try {
     const days = Number(daysSel.value) || 7;
+    setStatus('分類器を確認中…');
+    await requireClassifierReady();
+
     setStatus('入力を解析中…');
     const { pubkey, relays } = resolveInput(input.value);
 
@@ -56,54 +62,30 @@ async function run() {
     if (!events.length) {
       setStatus(`直近 ${days} 日間のノートが見つかりませんでした。別のリレーや期間を試してください。`, 'warn');
       renderEmpty();
-      describe({ pubkey, usedRelays, events, days, profile });
+      describe({ pubkey, usedRelays, events, days, profile, classification: null });
       return;
     }
 
-    const text = events.map((e) => e.content).join('\n');
-    const model = buildBrainModel(text, 24);
-
-    renderBrain(canvas, model, {
+    setStatus('投稿を分類中…');
+    const classification = await classifier.classifyPosts(events.map((e) => e.content));
+    renderBrainFromPosts(canvas, classification.perPost, {
       name: lastName,
-      footer: `${events.length} notes · ${days}d · nostr-brainmaker`,
+      footer: `${classification.posts} posts · ${days}d · nostr-brainmaker`,
     });
 
-    let classifyMode = 'unavailable';
-    let classification = null;
-    let classificationError = null;
-    try {
-      const classifierState = await classifierReady;
-      if (classifierState === 'ready') {
-        classification = await classifier.classifyPosts(events.map((e) => e.content));
-        classifyMode = 'classifier';
-      } else {
-        classificationError = classifier.reason || 'model artifacts are unavailable';
-        console.error('classifier unavailable:', classificationError);
-      }
-    } catch (err) {
-      classificationError = err?.message || String(err);
-      console.error('classifier failed:', err);
-    }
-
-    if (classifyMode === 'classifier') {
-      setStatus(`完成！ ${events.length} 件のノートから ${model.terms.length} 語を可視化しました。`, 'ok');
-    } else {
-      setStatus(
-        `可視化は完了しましたが、学習済み分類器は利用できません: ${classificationError || 'unknown error'}`,
-        'warn',
-      );
-    }
+    setStatus(`完成！ ${classification.posts} 件の投稿を 1投稿=1文字 で可視化しました。`, 'ok');
     exportBtn.disabled = false;
-    describe({ pubkey, usedRelays, events, days, profile, model, classifyMode, classification, classificationError });
+    describe({ pubkey, usedRelays, events, days, profile, classification });
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), 'error');
+    renderEmpty(err.message || 'エラーが発生しました');
   } finally {
     goBtn.disabled = false;
   }
 }
 
-function renderEmpty() {
+function renderEmpty(message = 'ノートが見つかりませんでした') {
   const ctx = canvas.getContext('2d');
   canvas.width = 1000;
   canvas.height = 1000;
@@ -112,31 +94,20 @@ function renderEmpty() {
   ctx.fillStyle = '#b08a96';
   ctx.textAlign = 'center';
   ctx.font = '500 30px system-ui, sans-serif';
-  ctx.fillText('ノートが見つかりませんでした', 500, 500);
+  ctx.fillText(message, 500, 500);
 }
 
-function describe({ pubkey, usedRelays, events, days, profile, model, classifyMode = 'unavailable', classification = null, classificationError = null }) {
-  // The *requested* window — always the full N days, even on no-post days.
+function describe({ pubkey, usedRelays, events, days, profile, classification = null }) {
   const requestedRange = rangeLabel(days);
-
-  // Optional secondary line: the span that actually had posts.
   const stats = activeDayStats(events);
   const activeLine = stats
     ? `<li><b>投稿のあった期間:</b> ${escapeHtml(formatDate(stats.firstSec * 1000))} 〜 ${escapeHtml(formatDate(stats.lastSec * 1000))}（${stats.activeDays} 日に投稿）</li>`
     : '';
 
-  const topList = model
-    ? model.terms.slice(0, 12).map((t) => `<span class="chip" style="--c:${chipColor(t.category)}">${escapeHtml(t.term)} <b>${t.count}</b></span>`).join(' ')
-    : '';
-
-  const modeLabel = classifyMode === 'classifier' ? '学習済み分類器' : '利用不可';
-  const modeLine = `<li><b>分類器:</b> ${escapeHtml(modeLabel)}${classification ? `（${classification.posts} 投稿を分類）` : ''}</li>`;
-  const errorLine = classifyMode === 'classifier' || !classificationError
-    ? ''
-    : `<li><b>分類器エラー:</b> ${escapeHtml(classificationError)}</li>`;
-  const labelChips = classification && classification.labels.length
-    ? classification.labels.slice(0, 10).map((l) => `<span class="chip">${escapeHtml(l.char)} <b>${l.count}</b></span>`).join(' ')
-    : '';
+  const modeLine = `<li><b>分類器:</b> ${escapeHtml(classifier.manifest?.model?.name || 'unknown')}（${classification ? `${classification.posts} 投稿を分類` : '待機中'}）</li>`;
+  const labelList = classification && classification.labels.length
+    ? classification.labels.map((label) => `<li><b>${escapeHtml(label.char)}</b> ${label.count} 件</li>`).join('')
+    : '<li>分類対象の投稿はありません</li>';
 
   metaEl.innerHTML = `
     <div class="meta-card">
@@ -150,16 +121,9 @@ function describe({ pubkey, usedRelays, events, days, profile, model, classifyMo
         ${activeLine}
         <li><b>問い合わせたリレー:</b><br>${usedRelays.map((r) => `<code>${escapeHtml(r)}</code>`).join(' ')}</li>
       </ul>
-      ${topList ? `<h3>トップ語</h3><div class="chips">${topList}</div>` : ''}
-      ${labelChips ? `<h3>脳内ラベル（学習済み分類器）</h3><div class="chips">${labelChips}</div>` : ''}
+      <h3>ラベル件数</h3>
+      <ul class="label-counts">${labelList}</ul>
     </div>`;
-}
-
-function chipColor(cat) {
-  return {
-    愛情: '#ff6b9d', 仕事: '#4d96ff', 欲望: '#ffa24d',
-    遊び: '#42c98e', 悩み: '#9b6bff', その他: '#8a8f99',
-  }[cat] || '#8a8f99';
 }
 
 async function useNip07() {
@@ -187,7 +151,6 @@ input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') run();
 });
 
-// Surface whether a NIP-07 extension is available (best-effort hint only).
 if (!hasNip07()) {
   nip07Btn.title = 'NIP-07 対応のブラウザ拡張機能が必要です';
 }
@@ -196,7 +159,6 @@ exportBtn.addEventListener('click', () => {
   exportCanvas(canvas, `nostr-brain-${safe}.png`);
 });
 
-// Allow ?npub=... deep links.
 const params = new URLSearchParams(location.search);
 const pre = params.get('npub') || params.get('pubkey');
 if (pre) {

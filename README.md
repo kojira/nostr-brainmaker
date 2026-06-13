@@ -2,8 +2,9 @@
 
 A fully static, client-side web app that takes a **Nostr** identity
 (`npub` / hex pubkey / `nprofile`), fetches that author's posts from the last
-N days directly from Nostr relays in the browser, analyzes the text, and renders
-a **脳内メーカー (brain-maker)** style image you can download as PNG.
+N days directly from Nostr relays in the browser, classifies each post with a
+trained **1-character classifier**, and renders a **1 post = 1 glyph**
+brain-maker image you can download as PNG.
 
 No backend. No server. Everything runs in the browser and deploys to GitHub Pages.
 
@@ -17,9 +18,11 @@ No backend. No server. Everything runs in the browser and deploys to GitHub Page
 - **NIP-07**: one-click "NIP-07 から取得" fetches your public key from a browser
   extension (Alby, nos2x, …) via `window.nostr.getPublicKey()` and fills the input.
 - Fetches `kind:1` notes from the last 3 / 7 / 14 / 30 days via `nostr-tools` `SimplePool`.
-- Heuristic tokenization (Latin words + Japanese runs & bigrams) with a stopword list and frequency analysis.
-- Words placed inside a hand-drawn brain, sized by frequency and colored by category
-  (愛情 / 仕事 / 欲望 / 遊び / 悩み / その他).
+- Learned **1 post = 1 character** classification with argmax label selection.
+- Repeated labels are rendered as repeated glyphs; identical characters are never collapsed into one representative glyph.
+- Glyph positions are random inside the brain outline, without semantic placement.
+- Glyph size is fixed by default and only shrinks uniformly when there are many posts.
+- Glyph color is fixed per classifier label.
 - Shows exactly **what was fetched and from which relays**.
 - One-click **PNG export**.
 - Deep links: `?npub=npub1...` auto-runs on load.
@@ -29,32 +32,30 @@ No backend. No server. Everything runs in the browser and deploys to GitHub Page
 - **Vite** (vanilla JS, no framework) — builds to a static bundle.
 - **nostr-tools** — `nip19` decoding + relay querying.
 - **Canvas 2D** — rendering and PNG export.
-- **Vitest** — unit tests for the text-analysis helpers.
+- **Vitest** — unit tests for classifier and rendering helpers.
 
 ## Architecture
 
 ```
 index.html          # markup + mount points
 src/
-  main.js           # UI wiring: input → fetch → analyze → render
+  main.js           # UI wiring: input → fetch → classify → render
   nostr.js          # resolveInput() + fetchRecentNotes() + fetchProfile()  (network)
-  analyze.js        # cleanText / tokenize / countFrequencies / topTerms /
-                    # categorize / buildBrainModel  (pure, fully tested)
-  brain.js          # renderBrain() canvas drawing + exportCanvas()
+  brain.js          # renderBrainFromPosts() canvas drawing + exportCanvas()
+  classifier/       # model manifest / label map / normalization / inference adapter
   style.css
 tests/
-  analyze.test.js   # unit tests for the pure helpers
+  classifier-adapter.test.js
+  brain.test.js
 .github/workflows/
   deploy.yml        # CI: test + build + deploy to GitHub Pages
 vite.config.js      # base path = /<repo>/ for Pages
 ```
 
 Data flow: `resolveInput` decodes the identity → `fetchRecentNotes` queries
-relays for the author's recent `kind:1` events → their `content` is concatenated
-and passed to `buildBrainModel` → `renderBrain` draws the result to a canvas.
-
-The analysis layer (`analyze.js`) is intentionally free of DOM and network code
-so it can be unit-tested in Node.
+relays for the author's recent `kind:1` events → `classifier.classifyPosts()`
+returns `perPost` predictions → `renderBrainFromPosts()` draws one glyph per
+classified post to a canvas.
 
 ## Setup
 
@@ -196,10 +197,11 @@ the label-set design.
 
 ## 学習済み分類器の統合（ブラウザ）
 
-ブラウザアプリには、学習済みの「1文字」分類器を後から差し込むための**シーム（接合点）が実装済み**です（`src/classifier/`）。起動時に分類器を非ブロッキングで一度だけ初期化し、ヒューリスティック描画後に `classifier.available` のときだけ推論を試みます。
+ブラウザアプリの主経路は **学習済み 1文字分類器必須** です。`src/classifier/` の初期化に失敗した場合、アプリは旧ヒューリスティック経路へ fallback せず、明示エラーで停止します。
 
-- **既定はヒューリスティック**: 学習済みモデルが揃うまで `classifier.available` は false のままで、従来どおりヒューリスティック解析が使われます（UX は変わりません）。**推論バックエンド（transformers.js）は同梱・登録済み**で、`public/models/1char/manifest.json` ＋ 成果物が置かれた瞬間に有効化されます。`@huggingface/transformers` はモデルが存在するときだけ動的 import されるため、未投入時はライブラリを取得しません。
-- **成果物の置き場所**: エクスポートしたモデル一式は `public/models/1char/`（Vite が `/models/1char/` で配信）に置きます。アプリは実行時にここの `manifest.json` を fetch します。transformers.js 規約に従い、モデルは `onnx/model.onnx`、tokenizer 設定は直下に置きます。`*.onnx` / `manifest.json` / トークナイザ等の実バイナリは gitignore でコミットしません（スキーマは `public/models/1char/manifest.example.json` を参照）。
+- **主返り値は `perPost`**: `classifier.classifyPosts()` は 1投稿ごとの `{ id, char, prob }` を返し、主描画はその配列をそのまま使用します。
+- **argmax のみ**: 閾値は使いません。各投稿は argmax で 1 文字に決定されます。
+- **成果物の置き場所**: エクスポートしたモデル一式は `public/models/1char/`（Vite が `/models/1char/` で配信）に置きます。アプリは実行時にここの `manifest.json` を fetch します。transformers.js 規約に従い、モデルは `onnx/model.onnx`、tokenizer 設定は直下に置きます。
 - **エクスポート＆デプロイ（ワンコマンド・ハンドオフ）**: 学習 run からブラウザ成果物とマニフェストを一括生成・検証します。
 
   > **ブロッカー**: 学習済み run-dir（HF チェックポイント: `config.json` + `model.safetensors`）が必須です。リポジトリにはコミットされていないため、まず `finetune_smoke/train_production.py` で生成してください。生成される ONNX / tokenizer バイナリは gitignore 対象で、**コミットしません**（追跡されるのは `public/models/1char/README.md` と `manifest.example.json` のみ）。
@@ -229,15 +231,14 @@ Deployment is automated via GitHub Actions (`.github/workflows/deploy.yml`):
 
 1. Push to `main`.
 2. In the repo: **Settings → Pages → Build and deployment → Source = GitHub Actions**.
-3. The workflow runs tests, checks out Git LFS assets, builds with `BASE_PATH=/<repo-name>/`, verifies the required model artifacts under `dist/models/1char/`, and publishes `dist/`.
+3. The workflow runs tests, builds with `BASE_PATH=/<repo-name>/`, verifies the required model artifacts under `dist/models/1char/`, and publishes `dist/`.
 
 The published URL is `https://<user>.github.io/<repo-name>/`.
 
 ## Notes & limitations
 
-- Japanese tokenization is heuristic (no morphological analyzer in the browser),
-  so "words" are whitespace/punctuation chunks plus Japanese character runs and bigrams.
-  It's tuned to be *fun and usable*, not linguistically precise.
+- The browser app no longer has a heuristic word-analysis path. If model
+  artifacts are missing or broken, rendering stops with an explicit error.
 - Relay availability varies; if no notes are found, try a different period or an
   identity with public relay activity. Default relays:
   `yabu.me`, `r.kojira.io`, `x.kojira.io`.

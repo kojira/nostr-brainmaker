@@ -130,16 +130,11 @@ button.secondary { background: #fff; color: var(--pink); border: 2px solid var(-
   font-size: .82rem;
   word-break: break-all;
 }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip {
-  background: color-mix(in srgb, var(--c) 16%, #fff);
-  color: var(--ink);
-  border: 1px solid var(--c);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: .85rem;
+.label-counts {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.7;
 }
-.chip b { color: var(--c); }
 
 footer {
   text-align: center;

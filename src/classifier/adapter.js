@@ -3,7 +3,7 @@
 // explicit unavailable state instead of silently pretending classification ran.
 
 import { loadManifest, loadLabelMap } from './manifest.js';
-import { indexLabelMap, softmax, aggregateLabels } from './labelMap.js';
+import { indexLabelMap, softmax, aggregateLabels, labelForIndex } from './labelMap.js';
 import { normalizeForClassifier } from './normalize.js';
 import { resolveBackendFactory } from './backend.js';
 
@@ -54,22 +54,30 @@ export function createClassifier(opts = {}) {
     }
     const slice = (texts || []).slice(0, maxPosts);
     const perPost = [];
-    for (const t of slice) {
-      const norm = normalizeForClassifier(t);
+    for (let sourceIndex = 0; sourceIndex < slice.length; sourceIndex++) {
+      const norm = normalizeForClassifier(slice[sourceIndex]);
       if (!norm) continue;
       const out = await backend.infer(norm);
       const probs = softmax(out);
-      let bi = 0;
+      let bestIndex = 0;
       for (let i = 1; i < probs.length; i++) {
-        if (probs[i] > probs[bi]) bi = i;
+        if (probs[i] > probs[bestIndex]) bestIndex = i;
       }
-      perPost.push({ index: bi, prob: probs[bi] });
+      const label = labelForIndex(bestIndex, indexed);
+      perPost.push({
+        sourceIndex,
+        id: label.id,
+        char: label.char,
+        def: label.def,
+        prob: probs[bestIndex],
+      });
     }
     const labels = aggregateLabels(perPost, indexed);
     return {
       mode: 'classifier',
       model: manifest?.model?.name || 'unknown',
       posts: perPost.length,
+      perPost,
       labels,
     };
   }
