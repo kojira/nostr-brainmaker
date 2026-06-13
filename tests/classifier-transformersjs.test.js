@@ -37,13 +37,15 @@ function fakeLib() {
   return { lib, env, calls };
 }
 
+// Production manifest: q4 is THE production model path/dtype.
 function manifestTransformersJs() {
   return {
     schemaVersion: 1,
     model: {
       name: 'ruri-v3-pt-30m-1char',
       runtime: 'transformers.js',
-      files: { model: 'onnx/model.onnx', tokenizer: 'tokenizer.json' },
+      files: { model: 'onnx/model_q4.onnx', tokenizer: 'tokenizer.json' },
+      dtype: 'q4',
       maxLength: 128,
       numLabels: 47,
     },
@@ -52,7 +54,7 @@ function manifestTransformersJs() {
 }
 
 describe('createTransformersJsBackend', () => {
-  it('loads via injected lib and infers logits', async () => {
+  it('loads via injected lib and infers logits (production q4)', async () => {
     const { lib, calls } = fakeLib();
     const backend = createTransformersJsBackend(manifestTransformersJs(), { loadLib: async () => lib });
 
@@ -62,10 +64,10 @@ describe('createTransformersJsBackend', () => {
     expect(lib.env.allowRemoteModels).toBe(false);
     expect(lib.env.allowLocalModels).toBe(true);
     expect(calls.modelId).toBe('models/1char');
-    // 'onnx/model.onnx' -> subfolder 'onnx', model_file_name 'model'
+    // 'onnx/model_q4.onnx' -> subfolder 'onnx', model_file_name 'model_q4'
     expect(calls.modelOpts.subfolder).toBe('onnx');
-    expect(calls.modelOpts.model_file_name).toBe('model');
-    expect(calls.modelOpts.dtype).toBe('fp32');
+    expect(calls.modelOpts.model_file_name).toBe('model_q4');
+    expect(calls.modelOpts.dtype).toBe('q4');
 
     const logits = await backend.infer('こんにちは');
     expect(Array.isArray(logits)).toBe(true);
@@ -76,7 +78,21 @@ describe('createTransformersJsBackend', () => {
     expect(calls.tokenizer[0].opts.truncation).toBe(true);
   });
 
-  it('reads dtype and a bare model file name from the manifest', async () => {
+  // Non-production alternatives (backward compat): fp32 and q8 manifests still load.
+  // Production is q4 (see manifestTransformersJs); these only prove other dtypes wire through.
+  it('reads dtype and model file name from non-production fp32 manifest', async () => {
+    const { lib, calls } = fakeLib();
+    const m = manifestTransformersJs();
+    m.model.dtype = 'fp32';
+    m.model.files.model = 'onnx/model.onnx';
+    const backend = createTransformersJsBackend(m, { loadLib: async () => lib });
+    await backend.load(m, { baseUrl: '/', basePath: 'models/1char/' });
+    expect(calls.modelOpts.subfolder).toBe('onnx');
+    expect(calls.modelOpts.model_file_name).toBe('model');
+    expect(calls.modelOpts.dtype).toBe('fp32');
+  });
+
+  it('reads dtype and a bare model file name from a non-production q8 manifest', async () => {
     const { lib, calls } = fakeLib();
     const m = manifestTransformersJs();
     m.model.dtype = 'q8';

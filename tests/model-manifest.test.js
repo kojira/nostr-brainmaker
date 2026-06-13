@@ -5,8 +5,14 @@ import { validateManifest } from '../src/classifier/manifest.js';
 
 describe('buildBrowserManifest', () => {
   it('builds a valid manifest with inline label map', () => {
-    const m = buildBrowserManifest({ labelMap: labelMapData, files: { model: 'model.onnx' } });
+    const m = buildBrowserManifest({
+      labelMap: labelMapData,
+      files: { model: 'onnx/model_q4.onnx' },
+      dtype: 'q4',
+    });
     expect(validateManifest(m).ok).toBe(true);
+    expect(m.model.files.model).toBe('onnx/model_q4.onnx');
+    expect(m.model.dtype).toBe('q4');
     expect(m.model.numLabels).toBe(47);
     expect(m.schemaVersion).toBe(1);
   });
@@ -22,15 +28,16 @@ describe('buildBrowserManifest', () => {
     expect(m.metrics.accuracy).toBe(0.8);
   });
 
-  it('defaults to the transformers.js layout', () => {
+  it('defaults to the transformers.js layout with the q4 production model', () => {
     const m = buildBrowserManifest({ labelMap: labelMapData });
     expect(m.model.runtime).toBe('transformers.js');
-    expect(m.model.files.model).toBe('onnx/model.onnx');
-    expect(m.model.dtype).toBeUndefined();
+    // Production browser model is the 4-bit weight-only artifact.
+    expect(m.model.files.model).toBe('onnx/model_q4.onnx');
     expect(validateManifest(m).ok).toBe(true);
   });
 
   it('threads runtime, files, and dtype options through', () => {
+    // Non-production alternative: int8 q8 model_quantized.onnx (dev only).
     const m = buildBrowserManifest({
       labelMap: labelMapData,
       runtime: 'onnx',

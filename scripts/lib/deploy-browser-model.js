@@ -8,10 +8,15 @@ export const DEFAULT_OPSET = 14;
 
 // Parse argv (already sliced past `node script.js`) into a plain options object.
 // Throws on unknown flags so typos fail loudly instead of being silently ignored.
+//
+// Production is q4-only: with no mode flag the deploy produces and serves the
+// 4-bit weight-only model (onnx/model_q4.onnx, manifest dtype 'q4'). --dev-fp32
+// and --dev-q8 are NON-PRODUCTION escape hatches for local debugging only; they
+// are NOT a production fallback.
 export function parseDeployArgs(argv) {
   const opts = {
     runDir: null,
-    quantize: false,
+    mode: 'q4', // 'q4' (production) | 'q8' (dev) | 'fp32' (dev)
     skipExport: false,
     dryRun: false,
     help: false,
@@ -22,8 +27,9 @@ export function parseDeployArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
-      case '--quantize': opts.quantize = true; break;
-      case '--fp32': opts.quantize = false; break; // explicit default, for clarity
+      case '--q4': opts.mode = 'q4'; break; // explicit production default, for clarity
+      case '--dev-q8': opts.mode = 'q8'; break; // dev only — int8 dynamic quant
+      case '--dev-fp32': opts.mode = 'fp32'; break; // dev only — unquantized
       case '--skip-export': opts.skipExport = true; break;
       case '--dry-run': opts.dryRun = true; break;
       case '-h':
@@ -42,31 +48,46 @@ export function parseDeployArgs(argv) {
   return opts;
 }
 
-// Decide which exported ONNX file the manifest should reference and the optional
+// Decide which exported ONNX file the manifest should reference and the
 // transformers.js dtype hint, given the requested mode and which files exist on
 // disk. Throws (with an actionable message) when the requested artifact is absent.
-export function resolveModelArtifact({ quantize = false, fp32Exists = false, quantizedExists = false } = {}) {
-  if (quantize) {
+//
+// Production ('q4') REQUIRES onnx/model_q4.onnx and serves it as dtype 'q4'.
+// There is deliberately NO silent fall-through to fp32/q8: a missing q4 artifact
+// is a hard error. 'q8'/'fp32' are reachable only via the explicit dev flags.
+export function resolveModelArtifact({ mode = 'q4', q4Exists = false, fp32Exists = false, quantizedExists = false } = {}) {
+  if (mode === 'q8') {
     if (!quantizedExists) {
       throw new Error(
-        'quantized mode requested but onnx/model_quantized.onnx was not produced. '
-        + 'Re-run the export with --quantize (the fp32 model alone is not enough).',
+        'dev q8 mode requested but onnx/model_quantized.onnx was not produced. '
+        + 'Re-run the export with --dev-q8 (q8 is a dev option, not production).',
       );
     }
     return { modelFile: 'onnx/model_quantized.onnx', dtype: 'q8' };
   }
-  if (!fp32Exists) {
+  if (mode === 'fp32') {
+    if (!fp32Exists) {
+      throw new Error(
+        'dev fp32 mode requested but onnx/model.onnx was not found in public/models/1char/. '
+        + 'Run the export first (fp32 is a dev option, not production).',
+      );
+    }
+    return { modelFile: 'onnx/model.onnx', dtype: 'fp32' };
+  }
+  // Production: q4 only — no fp32/q8 fallback.
+  if (!q4Exists) {
     throw new Error(
-      'onnx/model.onnx was not found in public/models/1char/. Run the export first '
-      + '(drop --skip-export), or export the assets there before using --skip-export.',
+      'production q4 model onnx/model_q4.onnx was not found in public/models/1char/. '
+      + 'Re-run the export so the 4-bit artifact is produced (drop --skip-export), or '
+      + 'export the q4 asset there first. fp32/q8 are NOT a production fallback.',
     );
   }
-  return { modelFile: 'onnx/model.onnx', dtype: null };
+  return { modelFile: 'onnx/model_q4.onnx', dtype: 'q4' };
 }
 
 // The browser asset set that Pages must publish for runtime inference. The
-// model file is parameterized because it is fp32 or quantized depending on mode.
-export function expectedAssets({ modelFile = 'onnx/model.onnx' } = {}) {
+// model file is parameterized because it is q4 (production), q8, or fp32 (dev).
+export function expectedAssets({ modelFile = 'onnx/model_q4.onnx' } = {}) {
   return {
     required: [
       'manifest.json',

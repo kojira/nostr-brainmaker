@@ -8,9 +8,10 @@
 // Options:
 //   --runtime <r>        'transformers.js' (default) or 'onnx'
 //   --model-file <p>     model path relative to public/models/1char/
-//                        (default 'onnx/model.onnx')
+//                        (default 'onnx/model_q4.onnx' — the production 4-bit model)
 //   --tokenizer-file <p> tokenizer path (default 'tokenizer.json')
-//   --dtype <d>          optional backend hint, e.g. 'q8' for an int8 model
+//   --dtype <d>          backend hint (default 'q4'; 'q8' for int8, 'fp32' for
+//                        unquantized — q8/fp32 are dev-only, not production)
 //
 // NOTE: this only writes the manifest. The actual ONNX model + tokenizer files
 // must already exist in public/models/1char/ (export/copy them there first).
@@ -70,16 +71,18 @@ function main() {
   }
   const labelMap = readJson(labelMapPath);
 
-  const files = {};
-  if (options['model-file']) files.model = options['model-file'];
+  // Production defaults: serve the 4-bit weight-only model with dtype 'q4'.
+  // q8/fp32 are reachable only by overriding --model-file/--dtype (dev-only).
+  const files = { model: options['model-file'] || 'onnx/model_q4.onnx' };
   if (options['tokenizer-file']) files.tokenizer = options['tokenizer-file'];
+  const dtype = options.dtype || 'q4';
 
   const manifest = buildBrowserManifest({
     runMetadata,
     labelMap,
     files,
+    dtype,
     ...(options.runtime ? { runtime: options.runtime } : {}),
-    ...(options.dtype ? { dtype: options.dtype } : {}),
   });
 
   const outDir = join(REPO_ROOT, 'public/models/1char');

@@ -42,7 +42,7 @@ jobs:
             dist/models/1char/tokenizer.json \
             dist/models/1char/tokenizer_config.json \
             dist/models/1char/onnx/config.json \
-            dist/models/1char/onnx/model.onnx
+            dist/models/1char/onnx/model_q4.onnx
           do
             test -f "$file"
           done

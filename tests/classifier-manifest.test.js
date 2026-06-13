@@ -7,7 +7,8 @@ function goodManifest() {
     model: {
       name: 'ruri-v3-pt-30m-1char',
       runtime: 'onnx',
-      files: { model: 'model.onnx', tokenizer: 'tokenizer.json' },
+      dtype: 'q4',
+      files: { model: 'onnx/model_q4.onnx', tokenizer: 'tokenizer.json' },
       maxLength: 256,
       numLabels: 47,
     },
@@ -18,6 +19,13 @@ function goodManifest() {
 describe('validateManifest', () => {
   it('accepts a good manifest', () => {
     expect(validateManifest(goodManifest()).ok).toBe(true);
+  });
+
+  it('accepts the q4 production manifest', () => {
+    const m = goodManifest();
+    expect(m.model.dtype).toBe('q4');
+    expect(m.model.files.model).toBe('onnx/model_q4.onnx');
+    expect(validateManifest(m).ok).toBe(true);
   });
 
   it('rejects missing schemaVersion', () => {

@@ -11,11 +11,18 @@ This produces the transformers.js asset layout under public/models/1char/:
       label_map.json
       onnx/model.onnx                 (fp32, always)
       onnx/model_quantized.onnx       (int8, only with --quantize)
+      onnx/model_q4.onnx              (4-bit weight-only, only with --q4)
+
+The q4 artifact is the production browser model: onnxruntime weight-only 4-bit
+quantization (MatMulNBits) shrinks the MatMul weights ~4x versus fp32 with a much
+smaller accuracy hit than int8 dynamic quantization, and onnxruntime-web /
+transformers.js load it directly via the `q4` dtype.
 
 After running this, generate the manifest the browser fetches at runtime:
 
     node scripts/build-model-manifest.js <run-dir>            # fp32
     node scripts/build-model-manifest.js <run-dir> --dtype q8 --model-file onnx/model_quantized.onnx
+    node scripts/build-model-manifest.js <run-dir> --dtype q4 --model-file onnx/model_q4.onnx
 
 The model/tokenizer binaries are gitignored and never committed; only the manifest
 schema example and READMEs are tracked.
@@ -91,7 +98,55 @@ def copy_label_map(run_dir: Path, out_dir: Path) -> bool:
     return False
 
 
-def export_model(run_dir: Path, out_dir: Path, opset: int, quantize: bool) -> list[str]:
+def quantize_q4(onnx_dir: Path, block_size: int) -> str | None:
+    """Produce onnx/model_q4.onnx from model.onnx via onnxruntime 4-bit weight-only
+    quantization (MatMulNBits).
+
+    This is the production browser artifact. onnxruntime ships the quantizer in two
+    spellings depending on version: the newer onnxruntime>=1.21 exposes
+    MatMulNBitsQuantizer in onnxruntime.quantization.matmul_nbits_quantizer, while the
+    pinned onnxruntime==1.20.1 in requirements-export.txt exposes MatMul4BitsQuantizer
+    in onnxruntime.quantization.matmul_4bits_quantizer. We try both so the script works
+    in either export venv.
+    """
+    import onnx
+
+    QuantizerCls = None
+    try:
+        from onnxruntime.quantization.matmul_nbits_quantizer import (
+            MatMulNBitsQuantizer as QuantizerCls,
+        )
+    except Exception:
+        try:
+            from onnxruntime.quantization.matmul_4bits_quantizer import (
+                MatMul4BitsQuantizer as QuantizerCls,
+            )
+        except Exception as exc:
+            fail(
+                "onnxruntime 4-bit weight-only quantizer is not available.\n"
+                "  It ships with onnxruntime (see finetune_smoke/requirements-export.txt).\n"
+                f"  (underlying import error: {exc})",
+                code=2,
+            )
+
+    src_path = onnx_dir / "model.onnx"
+    q4_path = onnx_dir / "model_q4.onnx"
+
+    print(f"[export] applying 4-bit weight-only quantization (block_size={block_size})")
+    model = onnx.load(str(src_path))
+    quantizer = QuantizerCls(model, block_size=block_size, is_symmetric=True)
+    quantizer.process()
+    # quantizer.model is an ONNXModel wrapper exposing save_model_to_file.
+    quantizer.model.save_model_to_file(str(q4_path), use_external_data_format=False)
+
+    if q4_path.exists():
+        print(f"[export] wrote {q4_path}")
+        return "onnx/model_q4.onnx"
+    print("[export] warning: expected model_q4.onnx not found", file=sys.stderr)
+    return None
+
+
+def export_model(run_dir: Path, out_dir: Path, opset: int, quantize: bool, q4: bool, q4_block_size: int) -> list[str]:
     from optimum.onnxruntime import ORTModelForSequenceClassification
 
     onnx_dir = out_dir / "onnx"
@@ -138,6 +193,11 @@ def export_model(run_dir: Path, out_dir: Path, opset: int, quantize: bool) -> li
         else:
             print("[export] warning: expected model_quantized.onnx not found", file=sys.stderr)
 
+    if q4:
+        q4_produced = quantize_q4(onnx_dir, q4_block_size)
+        if q4_produced:
+            produced.append(q4_produced)
+
     return produced
 
 
@@ -146,7 +206,9 @@ def main() -> None:
     parser.add_argument("--run-dir", required=True, help="trained checkpoint dir (e.g. finetune_smoke/train-output/run-...)")
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT), help=f"output dir (default {DEFAULT_OUT})")
     parser.add_argument("--opset", type=int, default=14, help="ONNX opset version (default 14)")
-    parser.add_argument("--quantize", action="store_true", help="also emit an int8-quantized model")
+    parser.add_argument("--quantize", action="store_true", help="also emit an int8-quantized model (onnx/model_quantized.onnx)")
+    parser.add_argument("--q4", action="store_true", help="also emit the production 4-bit weight-only model (onnx/model_q4.onnx)")
+    parser.add_argument("--q4-block-size", type=int, default=32, help="block size for 4-bit weight-only quantization (default 32)")
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir).resolve()
@@ -157,7 +219,7 @@ def main() -> None:
     require_export_deps()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    produced = export_model(run_dir, out_dir, args.opset, args.quantize)
+    produced = export_model(run_dir, out_dir, args.opset, args.quantize, args.q4, args.q4_block_size)
     tok = copy_tokenizer(run_dir, out_dir)
     has_label_map = copy_label_map(run_dir, out_dir)
 
@@ -170,8 +232,11 @@ def main() -> None:
     print("next: write the manifest the browser fetches at runtime:")
     print(f"  node scripts/build-model-manifest.js {args.run_dir}")
     if args.quantize:
-        print("  # or, to serve the quantized model:")
+        print("  # or, to serve the int8 quantized model:")
         print(f"  node scripts/build-model-manifest.js {args.run_dir} --dtype q8 --model-file onnx/model_quantized.onnx")
+    if args.q4:
+        print("  # or, to serve the production 4-bit model:")
+        print(f"  node scripts/build-model-manifest.js {args.run_dir} --dtype q4 --model-file onnx/model_q4.onnx")
 
 
 if __name__ == "__main__":

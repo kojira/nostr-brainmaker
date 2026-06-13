@@ -11,10 +11,16 @@
 //   node scripts/deploy-browser-model.js <train-output-run-dir> [options]
 //   npm run model:deploy -- <train-output-run-dir> [options]
 //
+// Production is q4-only: by default this exports the fp32 model (needed as the
+// quantizer input) then the 4-bit weight-only model, and deploys the q4 artifact
+// (manifest dtype 'q4', model.files.model -> onnx/model_q4.onnx). There is no
+// fp32/q8 production fallback — a missing q4 artifact is a hard error.
+//
 // Options:
-//   --quantize       export AND deploy the int8 model (manifest dtype q8,
+//   --q4             export + deploy the 4-bit model (the production default)
+//   --dev-q8         DEV ONLY: deploy the int8 model (manifest dtype q8,
 //                    model.files.model -> onnx/model_quantized.onnx)
-//   --fp32           deploy the fp32 model (the default; flag is for clarity)
+//   --dev-fp32       DEV ONLY: deploy the unquantized fp32 model
 //   --skip-export    skip export_onnx.py; assume assets are already in the out dir
 //                    (just (re)build the manifest and verify)
 //   --opset <n>      ONNX opset for the export (default 14)
@@ -68,8 +74,9 @@ const HELP = `deploy-browser-model — export + manifest + verify a trained run 
   npm run model:deploy -- <train-output-run-dir> [options]
 
 Options:
-  --quantize       export + deploy the int8 model (manifest dtype q8)
-  --fp32           deploy the fp32 model (default)
+  --q4             export + deploy the 4-bit model (manifest dtype q4; default)
+  --dev-q8         DEV ONLY: deploy the int8 model (manifest dtype q8)
+  --dev-fp32       DEV ONLY: deploy the unquantized fp32 model
   --skip-export    skip the ONNX export; just (re)build manifest + verify
   --opset <n>      ONNX opset for the export (default 14)
   --python <bin>   python executable for the export. Resolution order:
@@ -125,7 +132,11 @@ function main() {
 
   const python = resolveExportPython(opts.python);
   const runDirAbs = join(REPO_ROOT, opts.runDir);
-  const mode = opts.quantize ? 'int8 quantized (dtype q8)' : 'fp32';
+  const mode = opts.mode === 'q8'
+    ? 'int8 quantized — DEV ONLY (dtype q8)'
+    : opts.mode === 'fp32'
+      ? 'unquantized — DEV ONLY (fp32)'
+      : '4-bit weight-only (dtype q4)';
 
   // ---- step 1: validate the run-dir (the blocker) -------------------------
   logStep(1, `validate run-dir (${opts.runDir})`);
@@ -152,8 +163,11 @@ function main() {
   console.log(`  ok — deploying as: ${mode}`);
 
   // ---- plan the commands --------------------------------------------------
+  // The fp32 export always runs (it is the input the quantizer reads); for q4/q8
+  // we additionally ask export_onnx.py to emit the quantized artifact.
   const exportArgs = [EXPORT_SCRIPT, '--run-dir', opts.runDir, '--opset', String(opts.opset)];
-  if (opts.quantize) exportArgs.push('--quantize');
+  if (opts.mode === 'q4') exportArgs.push('--q4');
+  else if (opts.mode === 'q8') exportArgs.push('--quantize');
 
   if (opts.dryRun) {
     console.log('\n[deploy] --dry-run: planned commands (nothing executed):');
@@ -162,9 +176,13 @@ function main() {
     } else {
       console.log(`  $ ${python} ${exportArgs.join(' ')}`);
     }
-    const plannedModel = opts.quantize ? 'onnx/model_quantized.onnx' : 'onnx/model.onnx';
-    const manifestArgs = [MANIFEST_SCRIPT, opts.runDir];
-    if (opts.quantize) manifestArgs.push('--dtype', 'q8', '--model-file', plannedModel);
+    const plannedModel = opts.mode === 'q8'
+      ? 'onnx/model_quantized.onnx'
+      : opts.mode === 'fp32'
+        ? 'onnx/model.onnx'
+        : 'onnx/model_q4.onnx';
+    const plannedDtype = opts.mode === 'q8' ? 'q8' : opts.mode === 'fp32' ? 'fp32' : 'q4';
+    const manifestArgs = [MANIFEST_SCRIPT, opts.runDir, '--dtype', plannedDtype, '--model-file', plannedModel];
     console.log(`  $ node ${manifestArgs.join(' ')}`);
     console.log('  then verify required files under public/models/1char/:');
     for (const f of expectedAssets({ modelFile: plannedModel }).required) {
@@ -190,20 +208,20 @@ function main() {
   }
 
   // ---- decide which artifact the manifest points at -----------------------
+  const q4Exists = existsSync(join(OUT_DIR, 'onnx/model_q4.onnx'));
   const fp32Exists = existsSync(join(OUT_DIR, 'onnx/model.onnx'));
   const quantizedExists = existsSync(join(OUT_DIR, 'onnx/model_quantized.onnx'));
   let artifact;
   try {
-    artifact = resolveModelArtifact({ quantize: opts.quantize, fp32Exists, quantizedExists });
+    artifact = resolveModelArtifact({ mode: opts.mode, q4Exists, fp32Exists, quantizedExists });
   } catch (err) {
     fail(err.message);
   }
 
   // ---- step 3: build the manifest -----------------------------------------
   logStep(3, `build manifest -> ${artifact.modelFile}${artifact.dtype ? ` (dtype ${artifact.dtype})` : ''}`);
-  const manifestArgs = [MANIFEST_SCRIPT, opts.runDir];
+  const manifestArgs = [MANIFEST_SCRIPT, opts.runDir, '--model-file', artifact.modelFile];
   if (artifact.dtype) manifestArgs.push('--dtype', artifact.dtype);
-  if (artifact.modelFile !== 'onnx/model.onnx') manifestArgs.push('--model-file', artifact.modelFile);
   const mcode = run('node', manifestArgs, 'manifest build');
   if (mcode !== 0) fail(`manifest build failed (exit ${mcode})`, mcode);
 

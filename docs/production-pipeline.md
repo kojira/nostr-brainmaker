@@ -332,22 +332,31 @@ drives the **whole** export→deploy flow as one command and verifies the result
 3. **build** `public/models/1char/manifest.json` via
    `scripts/build-model-manifest.js`,
 4. **verify** the browser asset set actually landed (required:
-   `manifest.json`, `onnx/model*.onnx`, `tokenizer.json`, `config.json`;
-   recommended: `tokenizer_config.json`, `special_tokens_map.json`,
-   `label_map.json`).
+   `manifest.json`, the production `onnx/model_q4.onnx`, `tokenizer.json`,
+   `config.json`; recommended: `tokenizer_config.json`,
+   `special_tokens_map.json`, `label_map.json`).
+
+The production path is **q4-only**: the deployed manifest targets
+`onnx/model_q4.onnx` with `dtype q4`, and the deploy hard-errors if that 4-bit
+artifact is missing — there is **no fp32/q8 production fallback**. The fp32
+(`onnx/model.onnx`) and q8 (`onnx/model_quantized.onnx`, dtype q8) artifacts are
+reachable only via explicit dev flags.
 
 ```sh
 # export-only extra deps (NOT in finetune_smoke/requirements.txt)
 pip install -r finetune_smoke/requirements-export.txt
 
-npm run model:deploy -- <train-output-run-dir>            # fp32 (default)
-npm run model:deploy -- <train-output-run-dir> --quantize # int8 model, manifest dtype q8
-npm run model:deploy -- <train-output-run-dir> --dry-run  # print the plan, touch nothing
+npm run model:deploy -- <train-output-run-dir>              # q4 (production default)
+npm run model:deploy -- <train-output-run-dir> --dev-fp32   # DEV ONLY: unquantized fp32
+npm run model:deploy -- <train-output-run-dir> --dev-q8     # DEV ONLY: int8 model, manifest dtype q8
+npm run model:deploy -- <train-output-run-dir> --dry-run    # print the plan, touch nothing
 npm run model:deploy -- <train-output-run-dir> --skip-export # rebuild manifest + verify only
 ```
 
-Flags: `--quantize` (deploy `onnx/model_quantized.onnx` with `dtype q8`), `--fp32`
-(explicit default), `--skip-export`, `--opset <n>` (default 14), `--python <bin>`
+Flags: q4 (`onnx/model_q4.onnx` with `dtype q4`) is the production default and
+requires the q4 artifact; `--dev-q8` (`onnx/model_quantized.onnx` with `dtype q8`)
+and `--dev-fp32` (`onnx/model.onnx`) are dev-only alternatives;
+`--skip-export`, `--opset <n>` (default 14), `--python <bin>`
 (default `$PYTHON` or `python3`), `--dry-run`.
 
 **Blocker — a trained run-dir must exist.** There is **no run-dir committed in
@@ -362,6 +371,6 @@ binaries are tracked through Git LFS and the remaining runtime files are tracked
 normally. This script updates local artifacts; commit them when you refresh the
 deployed model.
 
-The pure decision logic (arg parsing, fp32-vs-q8 artifact selection, the
+The pure decision logic (arg parsing, q4-vs-fp32-vs-q8 artifact selection, the
 verify file list) lives in `scripts/lib/deploy-browser-model.js` and is covered
 by `tests/deploy-browser-model.test.js`.

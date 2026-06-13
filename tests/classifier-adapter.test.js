@@ -8,7 +8,8 @@ function manifestWithInlineMap() {
     model: {
       name: 'ruri-v3-pt-30m-1char',
       runtime: 'onnx',
-      files: { model: 'model.onnx', tokenizer: 'tokenizer.json' },
+      dtype: 'q4',
+      files: { model: 'model_q4.onnx', tokenizer: 'tokenizer.json' },
       maxLength: 256,
       numLabels: 47,
     },
@@ -89,6 +90,37 @@ describe('createClassifier', () => {
     expect(result.labels.length).toBeGreaterThan(0);
     const totalCount = result.labels.reduce((a, l) => a + l.count, 0);
     expect(totalCount).toBe(3);
+  });
+
+  it('loads and infers with the q4 production manifest', async () => {
+    let loadedManifest = null;
+    const backendFactory = () => ({
+      async load(manifest) {
+        loadedManifest = manifest;
+      },
+      async infer() {
+        const logits = new Array(47).fill(0);
+        logits[0] = 7;
+        return logits;
+      },
+      dispose() {},
+    });
+
+    const c = createClassifier({
+      fetchImpl: fetchReturning(manifestWithInlineMap()),
+      backendFactory,
+    });
+    await c.init();
+    expect(c.available).toBe(true);
+
+    expect(loadedManifest.model.dtype).toBe('q4');
+    expect(loadedManifest.model.files.model).toBe('model_q4.onnx');
+
+    const result = await c.classifyPosts(['愛してる']);
+    expect(result.mode).toBe('classifier');
+    expect(result.perPost).toEqual([
+      expect.objectContaining({ sourceIndex: 0, id: 0, char: '愛' }),
+    ]);
   });
 
   it('skips empty normalized posts without collapsing repeated labels', async () => {

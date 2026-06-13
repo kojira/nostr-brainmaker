@@ -21,7 +21,8 @@ export function buildBrowserManifest({
   const name = runMetadata.model || runMetadata.base_model || 'unknown';
 
   const modelFiles = {
-    model: files.model || 'onnx/model.onnx',
+    // Production browser model is the 4-bit weight-only artifact.
+    model: files.model || 'onnx/model_q4.onnx',
     tokenizer: files.tokenizer || 'tokenizer.json',
     ...files,
   };
@@ -37,8 +38,9 @@ export function buildBrowserManifest({
     maxLength,
     numLabels,
   };
-  // dtype is an optional hint for the transformers.js backend (e.g. 'q8' to load
-  // an int8-quantized model_quantized.onnx). Omitted → backend defaults to fp32.
+  // dtype is the hint for the transformers.js backend. Production manifests set
+  // 'q4' to load the 4-bit weight-only onnx/model_q4.onnx; 'q8' loads an
+  // int8 model_quantized.onnx (dev). Omitted → backend defaults to fp32 (dev).
   if (dtype) {
     model.dtype = dtype;
   }
