@@ -1,0 +1,13 @@
+{
+  "description": "Canonical input->expected pairs for the classifier input normalizer. Both src/classifier/normalize.js (JS, tests/classifier-normalize-parity.test.js) and finetune_smoke/normalize.py (Python, `python3 finetune_smoke/normalize.py --check`) must reproduce every expected output exactly, so browser inference sees the same text distribution training did.",
+  "cases": [
+    { "input": "https://example.com/path こんにちは", "expected": "こんにちは" },
+    { "input": "見て https://t.co/x すごい https://a.b/c ね", "expected": "見て すごい ね" },
+    { "input": "nostr:npub1abc 好き", "expected": "好き" },
+    { "input": "メンション npub1QWErty123 へ", "expected": "メンション へ" },
+    { "input": "ねこ  と　いぬ", "expected": "ねこ と いぬ" },
+    { "input": "  leading and trailing  ", "expected": "leading and trailing" },
+    { "input": "プレーンテキスト", "expected": "プレーンテキスト" },
+    { "input": "", "expected": "" }
+  ]
+}

@@ -10,4 +10,10 @@ data/production/raw/**
 data/production/approved-notes.json
 data/production/collection-report.json
 data/production/labels/**
+data/production/training/**
 data/pilot/**
+
+# Browser model artifacts (exported ONNX/tokenizer dropped here; never committed)
+public/models/1char/*
+!public/models/1char/README.md
+!public/models/1char/manifest.example.json

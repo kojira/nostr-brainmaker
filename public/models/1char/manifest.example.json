@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "model": {
+    "name": "ruri-v3-pt-30m-1char",
+    "runtime": "transformers.js",
+    "files": { "model": "onnx/model.onnx", "tokenizer": "tokenizer.json" },
+    "maxLength": 256,
+    "numLabels": 47,
+    "dtype": "fp32"
+  },
+  "labelMapPath": "label_map.json",
+  "normalization": { "stripUrls": true, "stripNostr": true, "stripMentions": true, "collapseWhitespace": true },
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "metrics": { "macroF1": null, "accuracy": null }
+}

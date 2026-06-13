@@ -176,5 +176,191 @@ success/failure counts.
 `scripts/report-labels.js` reads `labels/checkpoint.jsonl` (and merges
 `gemini-labels.json` if present) and prints a per-label table with `OK`/`need N`
 status, the list of labels below target, the `分類不能` count, and totals.
-`--json` / `--out <path>` emit the machine-readable `pipeline-report.json` shape.
-No network or API calls.
+If `labels/synthetic-labels.json` exists (see Stage 4 below, override with
+`--synthetic-json`), the table gains `real` / `synth` / `total` columns and the
+`need` status is computed against the combined total; both real-only and
+real+synthetic below-target lists are printed. Without the synthetic file the
+output is unchanged. `--json` / `--out <path>` emit the machine-readable
+`pipeline-report.json` shape (real data only). No network or API calls.
+
+## Training dataset export (`npm run export:dataset`)
+
+`scripts/export-dataset.js` materializes the merged JSONL that downstream
+training should consume. It reads:
+
+- real: `data/production/labels/checkpoint.jsonl` + `gemini-labels.json`
+- synthetic: `data/production/labels/synthetic-checkpoint.jsonl` +
+  `synthetic-labels.json`
+- label map: `data/production/label_map.json`
+
+and writes gitignored outputs under `data/production/training/`:
+
+- `dataset.jsonl` — one JSON object per training row with at least `content`,
+  `label`, `label_id`, `source_type`, `event_id`, `source_model`, and `source`.
+- `summary.json` — total rows, `real` / `synthetic` breakdown, per-label counts,
+  duplicate-overwrite count, and missing-`event_id` assignments.
+- `manifest.json` — exact input/output paths and export metadata.
+
+Merge semantics:
+
+1. `*.json` snapshots are loaded first, then `*.jsonl` checkpoint rows. Later
+   records overwrite earlier ones for the same `event_id`, so the crash-safe
+   append log remains the source of truth for the final row.
+2. Missing or blank `event_id`s are replaced with deterministic fallback ids
+   derived from `label + content`, so malformed upstream rows do not break the
+   export.
+3. Rows missing `content` or carrying an unknown label are skipped and counted in
+   `summary.json`.
+
+Usage:
+
+```sh
+npm run export:dataset
+node scripts/export-dataset.js --data-dir data/production --out-dir data/production/training
+```
+
+The `finetune_smoke/` helpers default to
+`data/production/training/dataset.jsonl`, so the training flow is:
+
+```sh
+npm run export:dataset                    # full production dataset JSONL
+python3 finetune_smoke/prepare_subset.py # optional smoke subset (deterministic, covers every label)
+python3 finetune_smoke/train_smoke.py    # optional smoke verification on the subset
+python3 finetune_smoke/train_production.py
+```
+
+For the real run, the default input is already the exported full dataset, so an
+explicit command looks like:
+
+```sh
+python3 finetune_smoke/train_production.py \
+  --dataset data/production/training/dataset.jsonl \
+  --label-map data/production/label_map.json \
+  --output-dir finetune_smoke/train-output/run-$(date +%Y%m%d-%H%M%S)
+```
+
+`finetune_smoke/train-output/` is intentionally gitignored.
+
+## Stage 4 — Synthetic backfill (`npm run synthesize`)
+
+`scripts/synthesize.js` reverse-generates (逆生成) Japanese Nostr-style posts
+with Gemini for labels that stay below the `--min` target, so the training set
+can be balanced without waiting for more Nostr collection. **Use it as a
+backfill of last resort**: synthetic text is model-written, not observed
+behavior, and should stay clearly flagged (or be downweighted/excluded) in
+training.
+
+```sh
+npm run synthesize -- --dry-run                   # deficits + plan, no API key needed
+GEMINI_API_KEY=... npm run synthesize -- --min 50 # backfill every label below 50
+GEMINI_API_KEY=... npm run synthesize -- --labels 虜,犬,猫 --min 50
+```
+
+What it does, per deficit label:
+
+1. Counts existing data: real items (`gemini-labels.json` + `checkpoint.jsonl`
+   ok-records, deduped by `event_id`) **plus** already-generated synthetic items
+   (`synthetic-labels.json` + `synthetic-checkpoint.jsonl`). Effective
+   `have = real + synthetic`, so re-running resumes instead of regenerating.
+2. Builds a Japanese generation prompt asking for `--batch` short, diverse,
+   casual SNS-style posts (1〜120字, no hashtag spam / usernames / URLs) whose
+   dominant mental state is the target label. The prompt embeds the label's
+   definition, the **full 46-label list** (the post must not read more naturally
+   as any other label), and up to 3 real posts of that label as 文体の参考
+   (style reference only — copying is forbidden).
+3. Filters candidates: length bounds, `detectJapanese` (the repo's real
+   `franc` + kana/CJK policy), and dedup by normalized-content hash against the
+   batch, all real labeled items, and all prior synthetic items.
+4. **Verification round-trip (default ON):** each surviving candidate is sent
+   through the shared `labelOne` with the unmodified production labeling prompt.
+   It is kept **only if the returned label equals the target label**; the
+   verifier's `confidence`/`rationale` are stored and the record gets
+   `verified: true`. With `--no-verify`, filtered candidates are kept directly
+   (`verified: false`, confidence 0.9).
+5. Appends each accepted record to `labels/synthetic-checkpoint.jsonl`
+   immediately (crash-safe; an interrupted run resumes from those counts), then
+   loops generation rounds until the label reaches the target or `--max-rounds`
+   is hit (a warning logs how many items are still missing — nothing is silently
+   capped).
+
+### Flags
+
+| flag | default | meaning |
+| --- | --- | --- |
+| `--labels 虜,犬,猫` | (auto) | restrict to these labels; default = every label below `--min` |
+| `--min 50` | `50` | target per label (real + synthetic) |
+| `--batch 10` | `10` | posts requested per generation call |
+| `--model` | `gemini-3.1-flash-lite` | Gemini model for generation **and** verification |
+| `--rpm 60` | `60` | shared sliding-window rate limit across generation + verification calls |
+| `--max-rounds 8` | `8` | per label: max generation rounds before giving up |
+| `--no-verify` | verify ON | skip the labeling round-trip; keep filtered candidates as `verified: false` |
+| `--dry-run` | off | print per-label deficits + planned rounds, no API calls (works without a key) |
+| `--data-dir` | `data/production` | base dir; outputs go under `<data-dir>/labels/` |
+| `--api-key-env` | `GEMINI_API_KEY` | env var (or `.env` key) holding the API key |
+
+### Outputs (all gitignored, under `<data-dir>/labels/`)
+
+- `synthetic-checkpoint.jsonl` — append-only resume log, one `{ok:true, ...record}`
+  per accepted item, flushed immediately.
+- `synthetic-labels.json` — `{generated_at, model, min, count, items[]}` with
+  **all** synthetic records (previous runs included), rebuilt atomically.
+- `synthesis-report.json` — `{generated_at, model, params, per_label:[{label,
+  have_before, generated, verified_rejected, filter_rejected, have_after}],
+  totals}`.
+
+### How synthetic data stays separate from Nostr data
+
+Synthetic records never touch `gemini-labels.json` / `checkpoint.jsonl`. They
+live in their own files and are individually marked: `event_id` has a `syn-`
+prefix (deterministic `contentHash` of the text), `pubkey` is `synthetic`,
+`source` is `synthetic:<model>`, and they carry `synthetic: true` plus
+`verified: true|false`. The schema is otherwise identical to real labeled
+records, so downstream tooling can opt in by exporting a merged training JSONL
+with `npm run export:dataset` — and can always filter synthetic data back out
+via `source_type === "synthetic"` when needed.
+
+## Stage 5 — Browser model deploy (`npm run model:deploy`)
+
+After training produces a run-dir, this is the realistic operator path to put a
+working classifier in front of the browser app. `scripts/deploy-browser-model.js`
+drives the **whole** export→deploy flow as one command and verifies the result:
+
+1. **validate** the run-dir — must be a real HF checkpoint (`config.json` +
+   `model.safetensors` / `pytorch_model.bin`),
+2. **export** ONNX + tokenizer + label_map into `public/models/1char/` via
+   `finetune_smoke/export_onnx.py` (skippable with `--skip-export`),
+3. **build** `public/models/1char/manifest.json` via
+   `scripts/build-model-manifest.js`,
+4. **verify** the browser asset set actually landed (required:
+   `manifest.json`, `onnx/model*.onnx`, `tokenizer.json`, `config.json`;
+   recommended: `tokenizer_config.json`, `special_tokens_map.json`,
+   `label_map.json`).
+
+```sh
+# export-only extra deps (NOT in finetune_smoke/requirements.txt)
+pip install -r finetune_smoke/requirements-export.txt
+
+npm run model:deploy -- <train-output-run-dir>            # fp32 (default)
+npm run model:deploy -- <train-output-run-dir> --quantize # int8 model, manifest dtype q8
+npm run model:deploy -- <train-output-run-dir> --dry-run  # print the plan, touch nothing
+npm run model:deploy -- <train-output-run-dir> --skip-export # rebuild manifest + verify only
+```
+
+Flags: `--quantize` (deploy `onnx/model_quantized.onnx` with `dtype q8`), `--fp32`
+(explicit default), `--skip-export`, `--opset <n>` (default 14), `--python <bin>`
+(default `$PYTHON` or `python3`), `--dry-run`.
+
+**Blocker — a trained run-dir must exist.** There is **no run-dir committed in
+this repo**, so actual ONNX generation is gated on first running
+`finetune_smoke/train_production.py` (see "Training dataset export" above). Until
+then `model:deploy` stops at step 1 with an actionable error, and the browser app
+keeps using the heuristic fallback (`classifier.available === false`).
+
+**Binaries stay gitignored.** The ONNX/tokenizer/manifest files written under
+`public/models/1char/` are excluded by `.gitignore`; only that directory's
+`README.md` and `manifest.example.json` are tracked. This script produces those
+local-only artifacts and does **not** commit anything.
+
+The pure decision logic (arg parsing, fp32-vs-q8 artifact selection, the
+verify file list) lives in `scripts/lib/deploy-browser-model.js` and is covered
+by `tests/deploy-browser-model.test.js`.

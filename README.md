@@ -114,6 +114,7 @@ npm run report:labels            # per-label counts, labels still below target (
 npm run pipeline -- --dry-run    # plan + fresh-run counts (use --seed-existing-labels to reuse existing labels)
 npm run pipeline                 # offline: replay data/production/raw/raw-notes.jsonl
 npm run pipeline -- --allow-network   # also fetch fresh notes from relays when raw runs dry
+npm run export:dataset           # merge real + synthetic into data/production/training/dataset.jsonl
 ```
 
 By default each run is a **fresh** count: completion counts start at zero. It still
@@ -131,11 +132,96 @@ success/failure. Outputs extend (not overwrite) `gemini-labels.json`,
 `--min 50`, `--concurrency 5`, `--rpm 60`, `--raw <jsonl>`, `--allow-network`,
 `--seed-existing-labels` (default OFF), `--resume` (default ON), `--dry-run`.
 
+### Synthetic backfill (逆生成)
+
+When some labels stay underrepresented no matter how long the pipeline runs
+(e.g. 虜/犬/猫 with only a handful of real posts), you can reverse-generate
+Japanese Nostr-style posts with Gemini for just the deficit labels instead of
+waiting for more collection:
+
+```bash
+npm run synthesize -- --dry-run                 # show per-label deficits + plan, no API calls
+GEMINI_API_KEY=... npm run synthesize -- --min 50
+GEMINI_API_KEY=... npm run synthesize -- --labels 虜,犬,猫,抱,泣,妬,仏,癒,嘘,羨 --min 50
+```
+
+Each generated post is round-trip **verified** by default: it is re-labeled with
+the production labeling prompt and kept only if the model returns the target
+label (disable with `--no-verify`). Output is kept strictly separate from real
+Nostr data under `data/production/labels/` — `synthetic-labels.json`,
+`synthetic-checkpoint.jsonl` (crash-safe resume log), and
+`synthesis-report.json` — all gitignored. Synthetic records are always
+distinguishable (`synthetic: true`, `syn-` event_id prefix, `pubkey:
+"synthetic"`, `source: "synthetic:<model>"`). `npm run report:labels` shows a
+separate `synth` column plus a combined total per label once synthetic data
+exists. Treat synthetic data as a last-resort backfill and keep it flagged in
+training.
+
+### Training dataset export
+
+`npm run export:dataset` builds the JSONL that training consumes by merging the
+real labeling artifacts (`gemini-labels.json` + `checkpoint.jsonl`) and the
+synthetic backfill artifacts (`synthetic-labels.json` +
+`synthetic-checkpoint.jsonl`) into gitignored files under
+`data/production/training/`:
+
+- `dataset.jsonl` — one record per training example with `content`, `label`,
+  `label_id`, `source_type`, `event_id`, `source_model`, `source`, and the
+  carry-through metadata needed to audit provenance.
+- `summary.json` — total count, real/synthetic breakdown, and per-label counts.
+- `manifest.json` — exact input/output paths plus export stats.
+
+Duplicate `event_id`s are overwritten by the later source in the merge order
+(`*.json` first, `*.jsonl` checkpoint second), and missing `event_id`s receive a
+deterministic fallback id so the export stays usable. The `finetune_smoke`
+helpers default to this exported dataset path.
+
+End-to-end training flow from this export:
+
+```bash
+npm run export:dataset                           # full input for every training step
+python3 finetune_smoke/prepare_subset.py        # optional: build tiny smoke subset
+python3 finetune_smoke/train_smoke.py           # optional: prove the loop on the subset
+python3 finetune_smoke/train_production.py      # full training on data/production/training/dataset.jsonl
+```
+
+`train_production.py` writes checkpoints and metadata under
+`finetune_smoke/train-output/` by default. That directory is gitignored.
+
 Outputs land under `data/production/` (raw notes, approved set, labels, raw
 Gemini logs, reports). See [docs/production-pipeline.md](docs/production-pipeline.md)
 for all options, resume/checkpointing, and the second-pass refinement, and
 [docs/1char-classification-design.md](docs/1char-classification-design.md) for
 the label-set design.
+
+## 学習済み分類器の統合（ブラウザ）
+
+ブラウザアプリには、学習済みの「1文字」分類器を後から差し込むための**シーム（接合点）が実装済み**です（`src/classifier/`）。起動時に分類器を非ブロッキングで一度だけ初期化し、ヒューリスティック描画後に `classifier.available` のときだけ推論を試みます。
+
+- **既定はヒューリスティック**: 学習済みモデルが揃うまで `classifier.available` は false のままで、従来どおりヒューリスティック解析が使われます（UX は変わりません）。**推論バックエンド（transformers.js）は同梱・登録済み**で、`public/models/1char/manifest.json` ＋ 成果物が置かれた瞬間に有効化されます。`@huggingface/transformers` はモデルが存在するときだけ動的 import されるため、未投入時はライブラリを取得しません。
+- **成果物の置き場所**: エクスポートしたモデル一式は `public/models/1char/`（Vite が `/models/1char/` で配信）に置きます。アプリは実行時にここの `manifest.json` を fetch します。transformers.js 規約に従い、モデルは `onnx/model.onnx`、tokenizer 設定は直下に置きます。`*.onnx` / `manifest.json` / トークナイザ等の実バイナリは gitignore でコミットしません（スキーマは `public/models/1char/manifest.example.json` を参照）。
+- **エクスポート＆デプロイ（ワンコマンド・ハンドオフ）**: 学習 run からブラウザ成果物とマニフェストを一括生成・検証します。
+
+  > **ブロッカー**: 学習済み run-dir（HF チェックポイント: `config.json` + `model.safetensors`）が必須です。リポジトリにはコミットされていないため、まず `finetune_smoke/train_production.py` で生成してください。生成される ONNX / tokenizer バイナリは gitignore 対象で、**コミットしません**（追跡されるのは `public/models/1char/README.md` と `manifest.example.json` のみ）。
+
+  ```bash
+  # 追加依存（export 専用）を入れてから、検証 → export → manifest → ファイル検証を1コマンドで
+  pip install -r finetune_smoke/requirements-export.txt
+  npm run model:deploy -- <train-output-run-dir>            # fp32（既定）
+  npm run model:deploy -- <train-output-run-dir> --quantize # int8（manifest dtype q8）
+  npm run model:deploy -- <train-output-run-dir> --dry-run  # 実行せず手順だけ表示
+  npm run model:deploy -- <train-output-run-dir> --skip-export # 既存 export の manifest 再生成のみ
+  ```
+
+  `model:deploy` は内部で `finetune_smoke/export_onnx.py` と `scripts/build-model-manifest.js` を呼び、最後に必須ファイル（`manifest.json` / `onnx/model*.onnx` / `tokenizer.json` / `config.json`）が `public/models/1char/` に揃ったかを検証します。個別に実行したい場合:
+
+  ```bash
+  python3 finetune_smoke/export_onnx.py --run-dir <train-output-run-dir> [--quantize]
+  npm run model:manifest <train-output-run-dir>
+  #   量子化版を使う場合: npm run model:manifest <run-dir> -- --dtype q8 --model-file onnx/model_quantized.onnx
+  ```
+
+詳細は [docs/1char-classification-design.md](docs/1char-classification-design.md) の §9「ブラウザ推論デプロイ計画」を参照してください。
 
 ## Deploy (GitHub Pages)
 

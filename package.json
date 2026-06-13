@@ -13,9 +13,14 @@
     "collect": "node scripts/collect.js",
     "label": "node scripts/label.js",
     "pipeline": "node scripts/pipeline.js",
-    "report:labels": "node scripts/report-labels.js"
+    "synthesize": "node scripts/synthesize.js",
+    "report:labels": "node scripts/report-labels.js",
+    "export:dataset": "node scripts/export-dataset.js",
+    "model:manifest": "node scripts/build-model-manifest.js",
+    "model:deploy": "node scripts/deploy-browser-model.js"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.3.3",
     "ajv": "^8.20.0",
     "franc": "^6.2.0",
     "nostr-tools": "^2.10.4"

@@ -2,6 +2,8 @@ import { resolveInput, fetchRecentNotes, fetchProfile, npubOf, hasNip07, getNip0
 import { buildBrainModel } from './analyze.js';
 import { rangeLabel, activeDayStats, formatDate } from './daterange.js';
 import { renderBrain, exportCanvas } from './brain.js';
+import { createClassifier } from './classifier/adapter.js';
+import { registerDefaultBackends } from './classifier/backends/transformersjs.js';
 
 const $ = (id) => document.getElementById(id);
 const input = $('npub-input');
@@ -14,6 +16,14 @@ const canvas = $('brain-canvas');
 const daysSel = $('days');
 
 let lastName = 'anonymous';
+
+// Optional trained-classifier seam. Stays 'unavailable' (heuristic fallback) until a
+// model manifest is dropped in public/models/1char/. The transformers.js backend is
+// registered up front, but its library is only imported once a manifest is present
+// (see backends/transformersjs.js), so this stays free when no model is deployed.
+registerDefaultBackends();
+const classifier = createClassifier({ baseUrl: import.meta.env.BASE_URL });
+const classifierReady = classifier.init().catch(() => 'unavailable');
 
 function setStatus(msg, kind = 'info') {
   statusEl.textContent = msg;
@@ -59,9 +69,21 @@ async function run() {
       footer: `${events.length} notes · ${days}d · nostr-brainmaker`,
     });
 
+    let classifyMode = 'heuristic';
+    let classification = null;
+    try {
+      await classifierReady;
+      if (classifier.available) {
+        classification = await classifier.classifyPosts(events.map((e) => e.content));
+        classifyMode = 'classifier';
+      }
+    } catch (err) {
+      console.warn('classifier unavailable, using heuristic:', err);
+    }
+
     setStatus(`完成！ ${events.length} 件のノートから ${model.terms.length} 語を可視化しました。`, 'ok');
     exportBtn.disabled = false;
-    describe({ pubkey, usedRelays, events, days, profile, model });
+    describe({ pubkey, usedRelays, events, days, profile, model, classifyMode, classification });
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), 'error');
@@ -82,7 +104,7 @@ function renderEmpty() {
   ctx.fillText('ノートが見つかりませんでした', 500, 500);
 }
 
-function describe({ pubkey, usedRelays, events, days, profile, model }) {
+function describe({ pubkey, usedRelays, events, days, profile, model, classifyMode = 'heuristic', classification = null }) {
   // The *requested* window — always the full N days, even on no-post days.
   const requestedRange = rangeLabel(days);
 
@@ -96,17 +118,25 @@ function describe({ pubkey, usedRelays, events, days, profile, model }) {
     ? model.terms.slice(0, 12).map((t) => `<span class="chip" style="--c:${chipColor(t.category)}">${escapeHtml(t.term)} <b>${t.count}</b></span>`).join(' ')
     : '';
 
+  const modeLabel = classifyMode === 'classifier' ? '学習済み分類器' : 'ヒューリスティック';
+  const modeLine = `<li><b>分類モード:</b> ${escapeHtml(modeLabel)}${classification ? `（${classification.posts} 投稿を分類）` : ''}</li>`;
+  const labelChips = classification && classification.labels.length
+    ? classification.labels.slice(0, 10).map((l) => `<span class="chip">${escapeHtml(l.char)} <b>${l.count}</b></span>`).join(' ')
+    : '';
+
   metaEl.innerHTML = `
     <div class="meta-card">
       <h3>取得したデータ</h3>
       <ul>
         <li><b>著者:</b> ${escapeHtml(profile?.display_name || profile?.name || '(プロフィール無し)')} <code>${escapeHtml(npubOf(pubkey))}</code></li>
         <li><b>ノート数:</b> ${events.length} 件（直近 ${days} 日間）</li>
+        ${modeLine}
         <li><b>対象期間（直近 ${days} 日間）:</b> ${escapeHtml(requestedRange)}</li>
         ${activeLine}
         <li><b>問い合わせたリレー:</b><br>${usedRelays.map((r) => `<code>${escapeHtml(r)}</code>`).join(' ')}</li>
       </ul>
       ${topList ? `<h3>トップ語</h3><div class="chips">${topList}</div>` : ''}
+      ${labelChips ? `<h3>脳内ラベル（学習済み分類器）</h3><div class="chips">${labelChips}</div>` : ''}
     </div>`;
 }
 

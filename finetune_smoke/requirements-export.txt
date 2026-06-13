@@ -1,0 +1,16 @@
+# Extra deps for ONNX export only (finetune_smoke/export_onnx.py).
+# NOT needed for training — install on the box that exports the browser model.
+#
+#   pip install -r finetune_smoke/requirements-export.txt
+#
+# optimum drives the HF -> ONNX conversion and (optional) int8 quantization.
+# Keep transformers/tokenizers consistent with requirements.txt (4.48.x / 0.21.x)
+# so the exported ModernBERT graph matches the trained checkpoint.
+#
+# PYTHON VERSION: onnxruntime 1.20.1 requires Python >=3.10 — the system
+# python 3.9 on this Mac will NOT work. Local export on this machine uses a
+# dedicated venv at finetune_smoke/.venv-export (Python 3.13), which
+# scripts/deploy-browser-model.js auto-detects.
+optimum[onnxruntime]==1.24.0
+onnx==1.17.0
+onnxruntime==1.20.1

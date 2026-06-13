@@ -2,7 +2,7 @@
 """Production training for the 1-char Nostr post classifier.
 
 Trains a single-label text classifier on top of cl-nagoya/ruri-v3-pt-30m (a
-ModernBERT encoder) using the full labeled checkpoint. Unlike train_smoke.py --
+ModernBERT encoder) using the exported full training dataset. Unlike train_smoke.py --
 which runs a handful of hand-rolled steps purely to prove the loop works -- this
 script uses the Hugging Face ``Trainer`` for a real run: proper train/val split,
 periodic evaluation, checkpointing, and a reproducible record of how it was
@@ -10,7 +10,7 @@ launched.
 
 Pipeline:
 
-    load checkpoint.jsonl + label_map.json
+    load dataset.jsonl + label_map.json
         -> drop malformed rows
         -> deterministic train/val split (seed) keeping rare labels in train
         -> tokenize
@@ -28,6 +28,10 @@ import shutil
 import sys
 import time
 from collections import Counter
+
+# Shared, language-parity-checked input normalizer (mirrors src/classifier/normalize.js).
+# Applied to every training text so the model trains on exactly what the browser feeds it.
+from normalize import normalize_for_classifier
 
 
 def log(stage, msg):
@@ -61,7 +65,7 @@ def load_label_map(path):
 
 
 def load_records(path, num_labels):
-    """Load (texts, labels) from checkpoint.jsonl, skipping malformed rows.
+    """Load (texts, labels) from dataset.jsonl, skipping malformed rows.
 
     A row is kept only if it has non-empty string ``content`` and an integer
     ``label_id`` within [0, num_labels). Everything else (blank lines, bad JSON,
@@ -96,7 +100,13 @@ def load_records(path, num_labels):
             if label_id < 0 or label_id >= num_labels:
                 stats["out_of_range"] += 1
                 continue
-            texts.append(content.strip())
+            # Parity: strip URLs / nostr: / npub mentions and collapse whitespace,
+            # identically to browser inference. Skip rows that normalize to empty.
+            norm = normalize_for_classifier(content)
+            if not norm:
+                stats["no_content"] += 1
+                continue
+            texts.append(norm)
             labels.append(label_id)
             stats["kept"] += 1
     return texts, labels, stats
@@ -151,9 +161,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument(
+        "--dataset",
         "--checkpoint",
-        default=os.path.join(repo, "data", "production", "labels", "checkpoint.jsonl"),
-        help="path to labeled checkpoint.jsonl",
+        dest="dataset",
+        default=os.path.join(repo, "data", "production", "training", "dataset.jsonl"),
+        help="path to exported training dataset JSONL",
     )
     ap.add_argument(
         "--label-map",
@@ -212,11 +224,11 @@ def main():
     log("LABELS", f"num_labels={num_labels} from {args.label_map}")
 
     # 2) DATASET LOAD ---------------------------------------------------------
-    if not os.path.exists(args.checkpoint):
-        log("FATAL", f"checkpoint not found: {args.checkpoint}")
+    if not os.path.exists(args.dataset):
+        log("FATAL", f"dataset not found: {args.dataset}")
         sys.exit(1)
-    texts, labels, stats = load_records(args.checkpoint, num_labels)
-    log("DATASET", f"kept {stats['kept']} examples from {args.checkpoint}")
+    texts, labels, stats = load_records(args.dataset, num_labels)
+    log("DATASET", f"kept {stats['kept']} examples from {args.dataset}")
     skipped = {k: v for k, v in stats.items() if k != "kept"}
     if skipped:
         log("DATASET", f"skipped malformed/invalid rows: {dict(sorted(skipped.items()))}")
@@ -362,7 +374,7 @@ def main():
         ),
         "args": vars(args),
         "data": {
-            "checkpoint": os.path.abspath(args.checkpoint),
+            "dataset": os.path.abspath(args.dataset),
             "label_map": os.path.abspath(args.label_map),
             "kept": stats["kept"],
             "skipped": skipped,
