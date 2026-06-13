@@ -18,7 +18,16 @@ let lastName = 'anonymous';
 
 registerDefaultBackends();
 const classifier = createClassifier({ baseUrl: import.meta.env.BASE_URL });
-const classifierReady = classifier.init();
+
+// Lazily initialize the (heavy) browser model only when analysis actually runs.
+// Eager init at module load caused mobile browsers to crash before use.
+let classifierReady = null;
+function ensureClassifierReady() {
+  if (!classifierReady) {
+    classifierReady = classifier.init();
+  }
+  return classifierReady;
+}
 
 function setStatus(msg, kind = 'info') {
   statusEl.textContent = msg;
@@ -32,7 +41,7 @@ function escapeHtml(s) {
 }
 
 async function requireClassifierReady() {
-  const state = await classifierReady;
+  const state = await ensureClassifierReady();
   if (state !== 'ready') {
     throw new Error(`学習済み分類器を初期化できません: ${classifier.reason || 'unknown error'}`);
   }
