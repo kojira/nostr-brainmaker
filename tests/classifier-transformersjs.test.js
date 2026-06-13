@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import labelMapData from '../data/production/label_map.json';
-import { createTransformersJsBackend } from '../src/classifier/backends/transformersjs.js';
+import {
+  createTransformersJsBackend,
+  parseModelFile,
+  describeQ4Coverage,
+} from '../src/classifier/backends/transformersjs.js';
 import { createClassifier } from '../src/classifier/adapter.js';
 
 // A fake @huggingface/transformers that records how it was configured and returns
@@ -64,9 +68,10 @@ describe('createTransformersJsBackend', () => {
     expect(lib.env.allowRemoteModels).toBe(false);
     expect(lib.env.allowLocalModels).toBe(true);
     expect(calls.modelId).toBe('models/1char');
-    // 'onnx/model_q4.onnx' -> subfolder 'onnx', model_file_name 'model_q4'
+    // 'onnx/model_q4.onnx' + dtype q4 -> model_file_name 'model'
+    // (transformers re-appends '_q4' -> model_q4.onnx)
     expect(calls.modelOpts.subfolder).toBe('onnx');
-    expect(calls.modelOpts.model_file_name).toBe('model_q4');
+    expect(calls.modelOpts.model_file_name).toBe('model');
     expect(calls.modelOpts.dtype).toBe('q4');
 
     const logits = await backend.infer('こんにちは');
@@ -99,9 +104,11 @@ describe('createTransformersJsBackend', () => {
     m.model.files.model = 'model_quantized.onnx';
     const backend = createTransformersJsBackend(m, { loadLib: async () => lib });
     await backend.load(m, { baseUrl: '/', basePath: 'models/1char/' });
-    // bare name still resolves into the conventional onnx/ subfolder
+    // bare name still resolves into the conventional onnx/ subfolder; the
+    // '_quantized' suffix is stripped because transformers re-appends it from
+    // dtype q8 -> model_quantized.onnx
     expect(calls.modelOpts.subfolder).toBe('onnx');
-    expect(calls.modelOpts.model_file_name).toBe('model_quantized');
+    expect(calls.modelOpts.model_file_name).toBe('model');
     expect(calls.modelOpts.dtype).toBe('q8');
   });
 
@@ -117,6 +124,58 @@ describe('createTransformersJsBackend', () => {
       },
     });
     await expect(backend.load(manifestTransformersJs(), {})).rejects.toThrow(/transformers/);
+  });
+});
+
+describe('parseModelFile', () => {
+  it("strips the q4 suffix so transformers re-appends it (production fix)", () => {
+    expect(parseModelFile('onnx/model_q4.onnx', 'q4')).toEqual({
+      subfolder: 'onnx',
+      modelFileName: 'model',
+    });
+  });
+
+  it('leaves fp32 base bare (no suffix)', () => {
+    expect(parseModelFile('onnx/model.onnx', 'fp32')).toEqual({
+      subfolder: 'onnx',
+      modelFileName: 'model',
+    });
+  });
+
+  it("strips the q8 '_quantized' suffix", () => {
+    expect(parseModelFile('onnx/model_quantized.onnx', 'q8')).toEqual({
+      subfolder: 'onnx',
+      modelFileName: 'model',
+    });
+  });
+
+  it('defaults a bare path into the onnx/ subfolder and strips the q8 suffix', () => {
+    expect(parseModelFile('model_quantized.onnx', 'q8')).toEqual({
+      subfolder: 'onnx',
+      modelFileName: 'model',
+    });
+  });
+
+  it('backward-compat: onnx/model.onnx + q4 keeps bare model (suffix not present)', () => {
+    expect(parseModelFile('onnx/model.onnx', 'q4')).toEqual({
+      subfolder: 'onnx',
+      modelFileName: 'model',
+    });
+  });
+
+  it('falls back to the production q4 path when file is empty', () => {
+    expect(parseModelFile('', 'q4')).toEqual({
+      subfolder: 'onnx',
+      modelFileName: 'model',
+    });
+  });
+});
+
+describe('describeQ4Coverage', () => {
+  it('documents the partial quantization (fp32 embeddings)', () => {
+    const cov = describeQ4Coverage();
+    expect(cov.partial).toBe(true);
+    expect(cov.embeddingsQuantized).toBe(false);
   });
 });
 
