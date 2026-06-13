@@ -1,5 +1,6 @@
 {
-  "_name_or_path": "/Volumes/2TB/openclaw/workspace/projects/nostr-brainmaker/finetune_smoke/train-output/run-20260612-2318-prod/",
+  "_attn_implementation_autoset": true,
+  "_name_or_path": "/Volumes/2TB/openclaw/workspace/projects/nostr-brainmaker/finetune_smoke/train-output/run-20260612-2318-prod",
   "architectures": [
     "ModernBertForSequenceClassification"
   ],
@@ -140,7 +141,6 @@
   "sep_token_id": 4,
   "sparse_pred_ignore_index": -100,
   "sparse_prediction": false,
-  "torch_dtype": "float32",
   "transformers_version": "4.48.3",
   "vocab_size": 102400
 }

@@ -147,48 +147,107 @@ def quantize_q4(onnx_dir: Path, block_size: int) -> str | None:
     return None
 
 
-def export_model(run_dir: Path, out_dir: Path, opset: int, quantize: bool, q4: bool, q4_block_size: int) -> list[str]:
-    from optimum.onnxruntime import ORTModelForSequenceClassification
+def _run_main_export(run_dir: Path, onnx_dir: Path, opset: int) -> None:
+    """Export the checkpoint to onnx_dir/model.onnx (+ optional model.onnx_data sidecar)
+    via optimum's main_export, tolerating a known optimum cleanup bug.
 
+    We call main_export directly (rather than the ORTModelForSequenceClassification
+    .from_pretrained(export=True) + save_pretrained dance) because that wrapper exports
+    into a TemporaryDirectory: when the optimum cleanup bug below fires it raises before
+    from_pretrained returns and the temp dir is destroyed, leaving nothing to recover.
+    main_export lets us export straight into onnx_dir, so even if the post-export cleanup
+    throws, model.onnx and its sidecar are already sitting in the target dir.
+
+    The optimum bug (optimum 1.24.0, exporters/onnx/convert.py): after consolidating
+    external weights into `model.onnx_data` (underscore), the cleanup loop does an
+    unconditional os.remove() on the model's *original* external-data reference, which for
+    ModernBERT is named `model.onnx.data` (dot). That file no longer exists at that point,
+    so os.remove raises FileNotFoundError even though model.onnx + model.onnx_data were
+    written fine. We catch that specific FileNotFoundError and continue only when both
+    output files are present.
+    """
+    from optimum.exporters.onnx import main_export
+
+    def _do_export(with_opset: bool) -> None:
+        kwargs = dict(
+            model_name_or_path=str(run_dir),
+            output=onnx_dir,
+            task="text-classification",
+            do_validation=False,
+            no_post_process=True,
+        )
+        if with_opset:
+            kwargs["opset"] = opset
+        main_export(**kwargs)
+
+    # opset defaults to 18 (see main()): ModernBERT uses LayerNormalization, which a
+    # downgrade to opset 14 cannot version-convert, so the old default crashed the export.
+    try:
+        try:
+            _do_export(with_opset=True)
+            print(f"[export] using explicit opset={opset}")
+        except TypeError as exc:
+            if "opset" not in str(exc):
+                raise
+            print(
+                f"[export] this optimum version does not accept an explicit opset "
+                f"({exc}); falling back to export without one"
+            )
+            _do_export(with_opset=False)
+    except FileNotFoundError as exc:
+        # Tolerate the optimum external-data cleanup bug, but ONLY if it really left us a
+        # usable model. The bug is about a stale `*.onnx.data` reference; require that the
+        # missing file looks like that and that model.onnx (+ its real sidecar) exist.
+        missing = Path(getattr(exc, "filename", "") or "")
+        model_onnx = onnx_dir / "model.onnx"
+        model_onnx_data = onnx_dir / "model.onnx_data"
+        looks_like_cleanup_bug = ".onnx.data" in (missing.name or str(exc))
+        if not (looks_like_cleanup_bug and model_onnx.exists() and model_onnx_data.exists()):
+            raise
+        print(
+            f"[export] tolerating optimum external-data cleanup bug: it tried to remove a "
+            f"stale '{missing.name or '*.onnx.data'}' that no longer exists, but model.onnx "
+            f"and model.onnx_data were written correctly; continuing."
+        )
+
+
+def export_model(run_dir: Path, out_dir: Path, opset: int, quantize: bool, q4: bool, q4_block_size: int) -> list[str]:
     onnx_dir = out_dir / "onnx"
     onnx_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[export] loading + converting checkpoint: {run_dir}")
-    # opset defaults to 18 (see main()): ModernBERT uses LayerNormalization, which a
-    # downgrade to opset 14 cannot version-convert, so the old default crashed the
-    # export. Some optimum versions (e.g. 1.24.0) no longer accept `opset` via
-    # from_pretrained(export=True); it gets forwarded to an internal export path
-    # (ORTModel._from_transformers) that rejects it with a TypeError. Try with an
-    # explicit opset first, then fall back cleanly to exporting without it.
-    try:
-        ort_model = ORTModelForSequenceClassification.from_pretrained(
-            str(run_dir), export=True, opset=opset
-        )
-        print(f"[export] using explicit opset={opset}")
-    except TypeError as exc:
-        if "opset" not in str(exc):
-            raise
-        print(
-            f"[export] this optimum version does not accept opset via from_pretrained "
-            f"({exc}); falling back to export without an explicit opset"
-        )
-        ort_model = ORTModelForSequenceClassification.from_pretrained(
-            str(run_dir), export=True
-        )
-    # save_pretrained writes model.onnx (+ config.json) into onnx_dir.
-    ort_model.save_pretrained(str(onnx_dir))
+    _run_main_export(run_dir, onnx_dir, opset)
+
+    model_onnx = onnx_dir / "model.onnx"
+    if not model_onnx.exists():
+        fail(f"export did not produce {model_onnx}")
     produced = ["onnx/model.onnx"]
-    print(f"[export] wrote {onnx_dir / 'model.onnx'}")
+    print(f"[export] wrote {model_onnx}")
 
     if quantize:
+        import tempfile
+
+        import onnx
         from optimum.onnxruntime import ORTQuantizer
         from optimum.onnxruntime.configuration import AutoQuantizationConfig
 
+        # The freshly exported model.onnx carries graph.value_info shapes that make
+        # onnxruntime's quantization shape-inference fail ("Inferred shape and existing
+        # shape differ in dimension 0"). Sanitize into a temp single-file ONNX with the
+        # value_info cleared (and no external data) and quantize from that copy; the
+        # public model.onnx is left untouched.
         print("[export] applying dynamic int8 quantization")
-        quantizer = ORTQuantizer.from_pretrained(str(onnx_dir), file_name="model.onnx")
         qconfig = AutoQuantizationConfig.avx512_vnni(is_static=False, per_channel=False)
-        quantizer.quantize(save_dir=str(onnx_dir), quantization_config=qconfig)
-        # optimum names the output model_quantized.onnx by default.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sanitized = Path(tmp_dir) / "model.onnx"
+            sanitized_model = onnx.load(str(model_onnx))
+            del sanitized_model.graph.value_info[:]
+            onnx.save(sanitized_model, str(sanitized), save_as_external_data=False)
+
+            quantizer = ORTQuantizer.from_pretrained(tmp_dir, file_name="model.onnx")
+            # Write the quantized output straight into onnx_dir so the public artifact
+            # path is unchanged. optimum names the output model_quantized.onnx by default.
+            quantizer.quantize(save_dir=str(onnx_dir), quantization_config=qconfig)
         quant_path = onnx_dir / "model_quantized.onnx"
         if quant_path.exists():
             produced.append("onnx/model_quantized.onnx")
