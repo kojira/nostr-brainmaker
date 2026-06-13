@@ -31,9 +31,10 @@
 //   --dry-run        print the plan (every command) and exit; touch nothing
 //   -h, --help       show this help
 //
-// NOTE: the ONNX/tokenizer binaries written under public/models/1char/ are
-// gitignored and never committed — only the README + manifest.example.json are
-// tracked. This script produces those local-only binaries; it does not commit.
+// NOTE: the runtime assets written under public/models/1char/ are tracked in the
+// repo so GitHub Pages can serve the classifier — the ONNX binaries via Git LFS,
+// the config/tokenizer/manifest via plain Git. This script produces those assets;
+// it does not commit. Commit them after deploying so Pages picks them up.
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -87,7 +88,8 @@ Options:
 
 Blocker: a trained run-dir (HF checkpoint: config.json + model.safetensors) must
 exist. There is none committed in this repo — produce one with
-finetune_smoke/train_production.py first. Exported binaries stay gitignored.`;
+finetune_smoke/train_production.py first. The exported browser assets ARE tracked
+(.onnx via Git LFS) and should be committed so GitHub Pages serves them.`;
 
 function logStep(n, msg) {
   console.log(`\n[deploy] step ${n}: ${msg}`);
@@ -244,7 +246,7 @@ function main() {
   }
 
   console.log('\n[deploy] done. public/models/1char/ now has the manifest + binaries the browser fetches.');
-  console.log('  The model/tokenizer binaries are gitignored and must NOT be committed.');
+  console.log('  Commit these assets so GitHub Pages serves them (.onnx is tracked via Git LFS).');
   console.log('  Verify locally with:  npm run dev   (then load a profile)');
 }
 

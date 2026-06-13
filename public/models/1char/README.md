@@ -40,8 +40,8 @@ GitHub Pages へ学習済み分類器を配備するため、このディレク�
 #    本番は q4 量子化版（onnx/model_q4.onnx / dtype q4）を成果物とする。
 pip install -r finetune_smoke/requirements-export.txt
 npm run model:deploy -- finetune_smoke/train-output/run-<ts>
-#   非本番の代替: int8 量子化版（dtype q8）を出す場合:
-npm run model:deploy -- finetune_smoke/train-output/run-<ts> --quantize
+#   非本番の代替（開発用のみ）: int8 量子化版（dtype q8）を出す場合:
+npm run model:deploy -- finetune_smoke/train-output/run-<ts> --dev-q8
 #   何を実行するか確認だけする場合:
 npm run model:deploy -- finetune_smoke/train-output/run-<ts> --dry-run
 ```

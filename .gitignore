@@ -26,5 +26,6 @@ public/models/1char/*
 !public/models/1char/onnx/
 public/models/1char/onnx/*
 !public/models/1char/onnx/config.json
+!public/models/1char/onnx/model_q4.onnx
 !public/models/1char/onnx/model.onnx
 !public/models/1char/onnx/model_quantized.onnx

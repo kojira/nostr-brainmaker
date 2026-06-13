@@ -161,9 +161,10 @@ deploy it to the browser app's model directory in one command from the repo root
 # export-only extra deps (NOT in requirements.txt; install on the export box)
 pip install -r requirements-export.txt        # from finetune_smoke/, or -r finetune_smoke/...
 
-npm run model:deploy -- finetune_smoke/train-output/run-<ts>            # fp32 (default)
-npm run model:deploy -- finetune_smoke/train-output/run-<ts> --quantize # int8 → manifest dtype q8
-npm run model:deploy -- finetune_smoke/train-output/run-<ts> --dry-run  # print the plan only
+npm run model:deploy -- finetune_smoke/train-output/run-<ts>             # q4 (production default; onnx/model_q4.onnx, manifest dtype q4)
+npm run model:deploy -- finetune_smoke/train-output/run-<ts> --dev-q8    # DEV ONLY (non-production): int8 → manifest dtype q8
+npm run model:deploy -- finetune_smoke/train-output/run-<ts> --dev-fp32  # DEV ONLY (non-production): unquantized fp32
+npm run model:deploy -- finetune_smoke/train-output/run-<ts> --dry-run   # print the plan only
 npm run model:deploy -- finetune_smoke/train-output/run-<ts> --skip-export # rebuild manifest only
 ```
 
@@ -173,16 +174,18 @@ validates the run-dir, runs `export_onnx.py`, builds `manifest.json` via
 `public/models/1char/`.
 
 **Blocker:** there is **no trained run-dir committed in this repo**, so this step
-is gated on running step 4 first. **Nothing here is committed:** the exported
-ONNX/tokenizer binaries under `public/models/1char/` are gitignored (only that
-dir's `README.md` and `manifest.example.json` are tracked).
+is gated on running step 4 first. The exported assets under `public/models/1char/`
+**are** tracked and should be committed so GitHub Pages serves them — the `.onnx`
+binaries via Git LFS, the config/tokenizer/manifest via plain Git.
 
 Equivalent manual steps (what `model:deploy` runs for you):
 
 ```bash
-python3 export_onnx.py --run-dir train-output/run-<ts> [--quantize]   # from finetune_smoke/
-node scripts/build-model-manifest.js finetune_smoke/train-output/run-<ts>
-#   quantized: node scripts/build-model-manifest.js <run-dir> --dtype q8 --model-file onnx/model_quantized.onnx
+python3 export_onnx.py --run-dir train-output/run-<ts> --q4   # from finetune_smoke/ (production q4 → onnx/model_q4.onnx)
+node scripts/build-model-manifest.js finetune_smoke/train-output/run-<ts>   # defaults to --dtype q4 --model-file onnx/model_q4.onnx
+#   非本番の代替（開発用のみ）:
+#     int8: python3 export_onnx.py --run-dir <run-dir> --quantize ; node scripts/build-model-manifest.js <run-dir> --dtype q8 --model-file onnx/model_quantized.onnx
+#     fp32: python3 export_onnx.py --run-dir <run-dir>           ; node scripts/build-model-manifest.js <run-dir> --dtype fp32 --model-file onnx/model.onnx
 ```
 
 ### Known-good export environment (this Mac)

@@ -204,7 +204,7 @@ the label-set design.
 - **成果物の置き場所**: エクスポートしたモデル一式は `public/models/1char/`（Vite が `/models/1char/` で配信）に置きます。アプリは実行時にここの `manifest.json` を fetch します。transformers.js 規約に従い、本番モデルは `onnx/model_q4.onnx`（dtype `q4`）、tokenizer 設定は直下に置きます。fp32（`onnx/model.onnx`）/ int8（`onnx/model_quantized.onnx`）は非本番の代替としてのみ扱います。
 - **エクスポート＆デプロイ（ワンコマンド・ハンドオフ）**: 学習 run からブラウザ成果物とマニフェストを一括生成・検証します。
 
-  > **ブロッカー**: 学習済み run-dir（HF チェックポイント: `config.json` + `model.safetensors`）が必須です。リポジトリにはコミットされていないため、まず `finetune_smoke/train_production.py` で生成してください。生成される ONNX / tokenizer バイナリは gitignore 対象で、**コミットしません**（追跡されるのは `public/models/1char/README.md` と `manifest.example.json` のみ）。
+  > **ブロッカー**: 学習済み run-dir（HF チェックポイント: `config.json` + `model.safetensors`）が必須です。リポジトリにはコミットされていないため、まず `finetune_smoke/train_production.py` で生成してください。生成されるブラウザ成果物（`public/models/1char/` 配下）は GitHub Pages 配信のためリポジトリで追跡し、**コミットします**（`.onnx` は Git LFS、config / tokenizer / manifest は通常の Git）。
 
   ```bash
   # 追加依存（export 専用）を入れてから、検証 → export → manifest → ファイル検証を1コマンドで
