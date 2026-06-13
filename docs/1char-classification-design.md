@@ -269,7 +269,7 @@
 - トークナイザ設定・`label_map.json`（id↔文字）を同梱。
 
 ### 量子化
-- **本番は q4 量子化（`onnx/model_q4.onnx` ＋ manifest `model.dtype:'q4'`）**でサイズ・レイテンシ削減。fp32（`onnx/model.onnx`）・q8（`onnx/model_quantized.onnx`）は非本番の代替として同梱可能。
+- **本番は int8 量子化（`onnx/model_quantized.onnx` ＋ manifest `model.dtype:'q8'`）**でサイズ・レイテンシ削減。fp32（`onnx/model.onnx`）・q4（`onnx/model_q4.onnx`）は非本番の代替として同梱可能。
 - 量子化前後で macro-F1 の劣化を比較し、許容範囲を確認。
 
 ### ランタイム
@@ -288,7 +288,7 @@
 - ロード中はプレースホルダ表示。初回ロードはキャッシュ（Service Worker / IndexedDB）。
 
 ### サイズ・レイテンシの懸念
-- `ruri-v3-30m` ＋ q4 でもモデル数十MB規模になり得る → 初回DLサイズを明示し、キャッシュ前提。
+- `ruri-v3-30m` ＋ q8（int8）でもモデル数十MB規模になり得る → 初回DLサイズを明示し、キャッシュ前提。
 - 1推論のレイテンシ目標を設定（例: WASM で数百ms以内）。長文は最大トークン長で truncation。
 
 ### 実装状況（アプリ側シーム）
@@ -304,10 +304,10 @@
 - **成果物の配置規約**: エクスポート物は `public/models/1char/`（Vite が `/models/1char/` で配信）に置く。実行時に `manifest.json` を fetch。`manifest.example.json` がスキーマ、`README.md` がディレクトリを文書化する。Pages 配備のため runtime 成果物はリポジトリで追跡し、`*.onnx` は Git LFS で管理する。
 - **マニフェスト スキーマ v1**: `{ schemaVersion:1, model:{ name, runtime:'onnx'|'transformers.js', files:{ model, tokenizer, ... }, maxLength, numLabels }, labelMap(インライン) または labelMapPath, normalization, createdAt, metrics }`。ラベル id・文字は `data/production/label_map.json`（観測 46 ラベル id 0..45 ＋ QA 用 id 46 `分類不能`、実行時には**出力しない**）に由来。モデル出力 index === label id。
 - **推論バックエンド（transformers.js）同梱・登録済み**: `src/classifier/backends/transformersjs.js` が `createTransformersJsBackend(manifest)` と `registerDefaultBackends()` を提供。`src/main.js` 起動時に登録する。ruri-v3 の fast tokenizer（`tokenizer.json`）を transformers.js がそのまま読み、ONNX 推論（onnxruntime-web / WASM・WebGPU）まで一体で扱うため、JS 側で SentencePiece を再実装する必要がない。`@huggingface/transformers` は **`load()` 内で動的 import** されるため、モデル未投入時はライブラリを取得せずバンドルも汚さない。manifest 不在や読み込み失敗時は `unavailable` として明示表示する。
-  - アセット配置（transformers.js 規約）: `public/models/1char/` 直下に `config.json` / `tokenizer.json` / `tokenizer_config.json` / `special_tokens_map.json`、**本番モデルは `onnx/model_q4.onnx` ＋ manifest `model.dtype:'q4'`**。非本番の代替として fp32（`onnx/model.onnx`）・q8（`onnx/model_quantized.onnx` ＋ `model.dtype:'q8'`）も同梱可能だが、本番パスは q4 を指す。
+  - アセット配置（transformers.js 規約）: `public/models/1char/` 直下に `config.json` / `tokenizer.json` / `tokenizer_config.json` / `special_tokens_map.json`、**本番モデルは `onnx/model_quantized.onnx` ＋ manifest `model.dtype:'q8'`**。非本番の代替として fp32（`onnx/model.onnx`）・q4（`onnx/model_q4.onnx` ＋ `model.dtype:'q4'`）も同梱可能だが、本番パスは q8 を指す。
 - **エクスポート ハンドオフ ツール**:
-  - `finetune_smoke/export_onnx.py` — 学習済み HF チェックポイント → ONNX（optimum 利用）＋ tokenizer ＋ `label_map.json` を `public/models/1char/` に書き出す。`--q4` で本番の 4bit weight-only モデル `onnx/model_q4.onnx`（MatMulNBits）を出力（fp32 はその量子化入力として常に出力）。`--quantize` で int8（非本番）も出力可。ONNX 用の追加依存は `finetune_smoke/requirements-export.txt`（既定の学習依存には含めない。未導入時は exit code 2 で導入コマンドを案内）。
-  - `scripts/lib/model-manifest.js` の純粋関数 `buildBrowserManifest(...)`（既定 runtime `transformers.js`、任意 `dtype`／`model-file`）。CLI `scripts/build-model-manifest.js`（`npm run model:manifest <run-dir> [--runtime --model-file --tokenizer-file --dtype]`）が `run_metadata.json` ＋ `data/production/label_map.json` から `public/models/1char/manifest.json` を生成。**本番マニフェストは `model.dtype:'q4'`／model file `onnx/model_q4.onnx` を指す**（fp32 `onnx/model.onnx`・q8 `onnx/model_quantized.onnx` は非本番の代替）。
+  - `finetune_smoke/export_onnx.py` — 学習済み HF チェックポイント → ONNX（optimum 利用、既定 opset 18 で ModernBERT の LayerNormalization 変換失敗を回避）＋ tokenizer ＋ `label_map.json` を `public/models/1char/` に書き出す。`--quantize` で本番の int8 モデル `onnx/model_quantized.onnx` を出力（fp32 はその量子化入力として常に出力）。`--q4` で 4bit weight-only（`onnx/model_q4.onnx`、MatMulNBits、非本番の代替）も出力可。ONNX 用の追加依存は `finetune_smoke/requirements-export.txt`（既定の学習依存には含めない。未導入時は exit code 2 で導入コマンドを案内）。
+  - `scripts/lib/model-manifest.js` の純粋関数 `buildBrowserManifest(...)`（既定 runtime `transformers.js`、任意 `dtype`／`model-file`）。CLI `scripts/build-model-manifest.js`（`npm run model:manifest <run-dir> [--runtime --model-file --tokenizer-file --dtype]`）が `run_metadata.json` ＋ `data/production/label_map.json` から `public/models/1char/manifest.json` を生成。**本番マニフェストは `model.dtype:'q8'`／model file `onnx/model_quantized.onnx` を指す**（fp32 `onnx/model.onnx`・q4 `onnx/model_q4.onnx` は非本番の代替）。
 - **テスト**: tests/classifier-labelmap.test.js, tests/classifier-manifest.test.js, tests/classifier-adapter.test.js, tests/classifier-transformersjs.test.js（fake lib 注入で load/infer・dtype・欠落フォールバックを検証）, tests/model-manifest.test.js。
 
 **残ブロッカー（実モデル投入までに必要なこと）**:
@@ -319,8 +319,8 @@
 
 **有効化手順（コード化済み）**:
 1. 学習: `python3 finetune_smoke/train_production.py`。
-2. エクスポート: `pip install -r finetune_smoke/requirements-export.txt` → `python3 finetune_smoke/export_onnx.py --run-dir <run-dir> --q4`（本番。`--q4` で `onnx/model_q4.onnx` を生成）。
-3. マニフェスト: 本番は `node scripts/build-model-manifest.js <run-dir>`（既定で `--dtype q4` / `--model-file onnx/model_q4.onnx`）。非本番の代替（開発用のみ）として fp32 は `--dtype fp32 --model-file onnx/model.onnx`、q8 は `--dtype q8 --model-file onnx/model_quantized.onnx`。
+2. エクスポート: `pip install -r finetune_smoke/requirements-export.txt` → `python3 finetune_smoke/export_onnx.py --run-dir <run-dir> --quantize`（本番。`--quantize` で int8 `onnx/model_quantized.onnx` を生成）。
+3. マニフェスト: 本番は `node scripts/build-model-manifest.js <run-dir>`（既定で `--dtype q8` / `--model-file onnx/model_quantized.onnx`）。非本番の代替（開発用のみ）として fp32 は `--dtype fp32 --model-file onnx/model.onnx`、q4 は `--dtype q4 --model-file onnx/model_q4.onnx`。
 4. `npm run dev` で動作確認（`分類モード: 学習済み分類器` が出れば成功）。
 
 ---

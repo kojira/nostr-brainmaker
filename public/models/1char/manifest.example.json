@@ -3,10 +3,10 @@
   "model": {
     "name": "ruri-v3-pt-30m-1char",
     "runtime": "transformers.js",
-    "files": { "model": "onnx/model_q4.onnx", "tokenizer": "tokenizer.json" },
+    "files": { "model": "onnx/model_quantized.onnx", "tokenizer": "tokenizer.json" },
     "maxLength": 256,
     "numLabels": 47,
-    "dtype": "q4"
+    "dtype": "q8"
   },
   "labelMapPath": "label_map.json",
   "normalization": { "stripUrls": true, "stripNostr": true, "stripMentions": true, "collapseWhitespace": true },

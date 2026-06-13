@@ -41,15 +41,15 @@ function fakeLib() {
   return { lib, env, calls };
 }
 
-// Production manifest: q4 is THE production model path/dtype.
+// Production manifest: q8 (int8) is THE production model path/dtype.
 function manifestTransformersJs() {
   return {
     schemaVersion: 1,
     model: {
       name: 'ruri-v3-pt-30m-1char',
       runtime: 'transformers.js',
-      files: { model: 'onnx/model_q4.onnx', tokenizer: 'tokenizer.json' },
-      dtype: 'q4',
+      files: { model: 'onnx/model_quantized.onnx', tokenizer: 'tokenizer.json' },
+      dtype: 'q8',
       maxLength: 128,
       numLabels: 47,
     },
@@ -58,7 +58,7 @@ function manifestTransformersJs() {
 }
 
 describe('createTransformersJsBackend', () => {
-  it('loads via injected lib and infers logits (production q4)', async () => {
+  it('loads via injected lib and infers logits (production q8)', async () => {
     const { lib, calls } = fakeLib();
     const backend = createTransformersJsBackend(manifestTransformersJs(), { loadLib: async () => lib });
 
@@ -68,11 +68,11 @@ describe('createTransformersJsBackend', () => {
     expect(lib.env.allowRemoteModels).toBe(false);
     expect(lib.env.allowLocalModels).toBe(true);
     expect(calls.modelId).toBe('models/1char');
-    // 'onnx/model_q4.onnx' + dtype q4 -> model_file_name 'model'
-    // (transformers re-appends '_q4' -> model_q4.onnx)
+    // 'onnx/model_quantized.onnx' + dtype q8 -> model_file_name 'model'
+    // (transformers re-appends '_quantized' -> model_quantized.onnx)
     expect(calls.modelOpts.subfolder).toBe('onnx');
     expect(calls.modelOpts.model_file_name).toBe('model');
-    expect(calls.modelOpts.dtype).toBe('q4');
+    expect(calls.modelOpts.dtype).toBe('q8');
 
     const logits = await backend.infer('こんにちは');
     expect(Array.isArray(logits)).toBe(true);
@@ -83,8 +83,8 @@ describe('createTransformersJsBackend', () => {
     expect(calls.tokenizer[0].opts.truncation).toBe(true);
   });
 
-  // Non-production alternatives (backward compat): fp32 and q8 manifests still load.
-  // Production is q4 (see manifestTransformersJs); these only prove other dtypes wire through.
+  // Non-production alternatives (backward compat): fp32 and q4 manifests still load.
+  // Production is q8 (see manifestTransformersJs); these only prove other dtypes wire through.
   it('reads dtype and model file name from non-production fp32 manifest', async () => {
     const { lib, calls } = fakeLib();
     const m = manifestTransformersJs();
@@ -97,19 +97,19 @@ describe('createTransformersJsBackend', () => {
     expect(calls.modelOpts.dtype).toBe('fp32');
   });
 
-  it('reads dtype and a bare model file name from a non-production q8 manifest', async () => {
+  it('reads dtype and a bare model file name from a non-production q4 manifest', async () => {
     const { lib, calls } = fakeLib();
     const m = manifestTransformersJs();
-    m.model.dtype = 'q8';
-    m.model.files.model = 'model_quantized.onnx';
+    m.model.dtype = 'q4';
+    m.model.files.model = 'model_q4.onnx';
     const backend = createTransformersJsBackend(m, { loadLib: async () => lib });
     await backend.load(m, { baseUrl: '/', basePath: 'models/1char/' });
     // bare name still resolves into the conventional onnx/ subfolder; the
-    // '_quantized' suffix is stripped because transformers re-appends it from
-    // dtype q8 -> model_quantized.onnx
+    // '_q4' suffix is stripped because transformers re-appends it from
+    // dtype q4 -> model_q4.onnx
     expect(calls.modelOpts.subfolder).toBe('onnx');
     expect(calls.modelOpts.model_file_name).toBe('model');
-    expect(calls.modelOpts.dtype).toBe('q8');
+    expect(calls.modelOpts.dtype).toBe('q4');
   });
 
   it('throws on infer before load (adapter -> unavailable)', async () => {
@@ -128,8 +128,8 @@ describe('createTransformersJsBackend', () => {
 });
 
 describe('parseModelFile', () => {
-  it("strips the q4 suffix so transformers re-appends it (production fix)", () => {
-    expect(parseModelFile('onnx/model_q4.onnx', 'q4')).toEqual({
+  it("strips the q8 '_quantized' suffix so transformers re-appends it (production fix)", () => {
+    expect(parseModelFile('onnx/model_quantized.onnx', 'q8')).toEqual({
       subfolder: 'onnx',
       modelFileName: 'model',
     });
@@ -142,8 +142,8 @@ describe('parseModelFile', () => {
     });
   });
 
-  it("strips the q8 '_quantized' suffix", () => {
-    expect(parseModelFile('onnx/model_quantized.onnx', 'q8')).toEqual({
+  it("strips the q4 suffix (dev alternative)", () => {
+    expect(parseModelFile('onnx/model_q4.onnx', 'q4')).toEqual({
       subfolder: 'onnx',
       modelFileName: 'model',
     });
@@ -163,8 +163,8 @@ describe('parseModelFile', () => {
     });
   });
 
-  it('falls back to the production q4 path when file is empty', () => {
-    expect(parseModelFile('', 'q4')).toEqual({
+  it('falls back to the production q8 path when file is empty', () => {
+    expect(parseModelFile('', 'q8')).toEqual({
       subfolder: 'onnx',
       modelFileName: 'model',
     });

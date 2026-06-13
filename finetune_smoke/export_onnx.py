@@ -10,19 +10,19 @@ This produces the transformers.js asset layout under public/models/1char/:
       special_tokens_map.json
       label_map.json
       onnx/model.onnx                 (fp32, always)
-      onnx/model_quantized.onnx       (int8, only with --quantize)
-      onnx/model_q4.onnx              (4-bit weight-only, only with --q4)
+      onnx/model_quantized.onnx       (int8, production, only with --quantize)
+      onnx/model_q4.onnx              (4-bit weight-only, dev alternative, only with --q4)
 
-The q4 artifact is the production browser model: onnxruntime weight-only 4-bit
-quantization (MatMulNBits) shrinks the MatMul weights ~4x versus fp32 with a much
-smaller accuracy hit than int8 dynamic quantization, and onnxruntime-web /
-transformers.js load it directly via the `q4` dtype.
+The int8 model_quantized.onnx is the production browser model: onnxruntime dynamic
+int8 quantization shrinks the artifact ~4x versus fp32 (~37MB) and onnxruntime-web /
+transformers.js load it directly via the `q8` dtype. The 4-bit q4 model is kept as a
+non-production dev alternative.
 
 After running this, generate the manifest the browser fetches at runtime:
 
-    node scripts/build-model-manifest.js <run-dir>            # fp32
-    node scripts/build-model-manifest.js <run-dir> --dtype q8 --model-file onnx/model_quantized.onnx
-    node scripts/build-model-manifest.js <run-dir> --dtype q4 --model-file onnx/model_q4.onnx
+    node scripts/build-model-manifest.js <run-dir> --dtype q8 --model-file onnx/model_quantized.onnx  # production
+    node scripts/build-model-manifest.js <run-dir>            # fp32 (dev)
+    node scripts/build-model-manifest.js <run-dir> --dtype q4 --model-file onnx/model_q4.onnx          # dev
 
 The model/tokenizer binaries are gitignored and never committed; only the manifest
 schema example and READMEs are tracked.
@@ -102,7 +102,8 @@ def quantize_q4(onnx_dir: Path, block_size: int) -> str | None:
     """Produce onnx/model_q4.onnx from model.onnx via onnxruntime 4-bit weight-only
     quantization (MatMulNBits).
 
-    This is the production browser artifact. onnxruntime ships the quantizer in two
+    This is a non-production dev alternative (production is the int8 q8 model).
+    onnxruntime ships the quantizer in two
     spellings depending on version: the newer onnxruntime>=1.21 exposes
     MatMulNBitsQuantizer in onnxruntime.quantization.matmul_nbits_quantizer, while the
     pinned onnxruntime==1.20.1 in requirements-export.txt exposes MatMul4BitsQuantizer
@@ -153,7 +154,9 @@ def export_model(run_dir: Path, out_dir: Path, opset: int, quantize: bool, q4: b
     onnx_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[export] loading + converting checkpoint: {run_dir}")
-    # Some optimum versions (e.g. 1.24.0) no longer accept `opset` via
+    # opset defaults to 18 (see main()): ModernBERT uses LayerNormalization, which a
+    # downgrade to opset 14 cannot version-convert, so the old default crashed the
+    # export. Some optimum versions (e.g. 1.24.0) no longer accept `opset` via
     # from_pretrained(export=True); it gets forwarded to an internal export path
     # (ORTModel._from_transformers) that rejects it with a TypeError. Try with an
     # explicit opset first, then fall back cleanly to exporting without it.
@@ -205,9 +208,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--run-dir", required=True, help="trained checkpoint dir (e.g. finetune_smoke/train-output/run-...)")
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT), help=f"output dir (default {DEFAULT_OUT})")
-    parser.add_argument("--opset", type=int, default=14, help="ONNX opset version (default 14)")
-    parser.add_argument("--quantize", action="store_true", help="also emit an int8-quantized model (onnx/model_quantized.onnx)")
-    parser.add_argument("--q4", action="store_true", help="also emit the production 4-bit weight-only model (onnx/model_q4.onnx)")
+    parser.add_argument("--opset", type=int, default=18, help="ONNX opset version (default 18; avoids the ModernBERT LayerNormalization conversion failure)")
+    parser.add_argument("--quantize", action="store_true", help="also emit the production int8-quantized model (onnx/model_quantized.onnx)")
+    parser.add_argument("--q4", action="store_true", help="also emit the 4-bit weight-only model (onnx/model_q4.onnx, dev alternative)")
     parser.add_argument("--q4-block-size", type=int, default=32, help="block size for 4-bit weight-only quantization (default 32)")
     args = parser.parse_args()
 
@@ -230,12 +233,16 @@ def main() -> None:
     print(f"  label_map:    {'label_map.json' if has_label_map else 'MISSING — copy data/production/label_map.json manually'}")
     print()
     print("next: write the manifest the browser fetches at runtime:")
-    print(f"  node scripts/build-model-manifest.js {args.run_dir}")
     if args.quantize:
-        print("  # or, to serve the int8 quantized model:")
+        print("  # production (int8 q8):")
         print(f"  node scripts/build-model-manifest.js {args.run_dir} --dtype q8 --model-file onnx/model_quantized.onnx")
+    else:
+        print("  # production needs the int8 model — re-run with --quantize, then:")
+        print(f"  node scripts/build-model-manifest.js {args.run_dir} --dtype q8 --model-file onnx/model_quantized.onnx")
+    print("  # or, to serve the unquantized fp32 model (dev):")
+    print(f"  node scripts/build-model-manifest.js {args.run_dir}")
     if args.q4:
-        print("  # or, to serve the production 4-bit model:")
+        print("  # or, to serve the 4-bit model (dev alternative):")
         print(f"  node scripts/build-model-manifest.js {args.run_dir} --dtype q4 --model-file onnx/model_q4.onnx")
 
 

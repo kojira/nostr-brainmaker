@@ -11,19 +11,19 @@
 //   node scripts/deploy-browser-model.js <train-output-run-dir> [options]
 //   npm run model:deploy -- <train-output-run-dir> [options]
 //
-// Production is q4-only: by default this exports the fp32 model (needed as the
-// quantizer input) then the 4-bit weight-only model, and deploys the q4 artifact
-// (manifest dtype 'q4', model.files.model -> onnx/model_q4.onnx). There is no
-// fp32/q8 production fallback — a missing q4 artifact is a hard error.
+// Production is q8-only: by default this exports the fp32 model (needed as the
+// quantizer input) then the int8-quantized model, and deploys the q8 artifact
+// (manifest dtype 'q8', model.files.model -> onnx/model_quantized.onnx). There is
+// no fp32/q4 production fallback — a missing q8 artifact is a hard error.
 //
 // Options:
-//   --q4             export + deploy the 4-bit model (the production default)
-//   --dev-q8         DEV ONLY: deploy the int8 model (manifest dtype q8,
-//                    model.files.model -> onnx/model_quantized.onnx)
+//   --q8             export + deploy the int8 model (the production default)
+//   --dev-q4         DEV ONLY: deploy the 4-bit weight-only model (manifest dtype q4,
+//                    model.files.model -> onnx/model_q4.onnx)
 //   --dev-fp32       DEV ONLY: deploy the unquantized fp32 model
 //   --skip-export    skip export_onnx.py; assume assets are already in the out dir
 //                    (just (re)build the manifest and verify)
-//   --opset <n>      ONNX opset for the export (default 14)
+//   --opset <n>      ONNX opset for the export (default 18)
 //   --python <bin>   python executable for the export. Resolution order:
 //                    --python, then $PYTHON, then
 //                    finetune_smoke/.venv-export/bin/python (if it exists),
@@ -75,11 +75,11 @@ const HELP = `deploy-browser-model — export + manifest + verify a trained run 
   npm run model:deploy -- <train-output-run-dir> [options]
 
 Options:
-  --q4             export + deploy the 4-bit model (manifest dtype q4; default)
-  --dev-q8         DEV ONLY: deploy the int8 model (manifest dtype q8)
+  --q8             export + deploy the int8 model (manifest dtype q8; default)
+  --dev-q4         DEV ONLY: deploy the 4-bit weight-only model (manifest dtype q4)
   --dev-fp32       DEV ONLY: deploy the unquantized fp32 model
   --skip-export    skip the ONNX export; just (re)build manifest + verify
-  --opset <n>      ONNX opset for the export (default 14)
+  --opset <n>      ONNX opset for the export (default 18)
   --python <bin>   python executable for the export. Resolution order:
                    --python > $PYTHON > finetune_smoke/.venv-export/bin/python
                    (if present) > python3
@@ -134,11 +134,11 @@ function main() {
 
   const python = resolveExportPython(opts.python);
   const runDirAbs = join(REPO_ROOT, opts.runDir);
-  const mode = opts.mode === 'q8'
-    ? 'int8 quantized — DEV ONLY (dtype q8)'
+  const mode = opts.mode === 'q4'
+    ? '4-bit weight-only — DEV ONLY (dtype q4)'
     : opts.mode === 'fp32'
       ? 'unquantized — DEV ONLY (fp32)'
-      : '4-bit weight-only (dtype q4)';
+      : 'int8 quantized (dtype q8)';
 
   // ---- step 1: validate the run-dir (the blocker) -------------------------
   logStep(1, `validate run-dir (${opts.runDir})`);
@@ -165,11 +165,11 @@ function main() {
   console.log(`  ok — deploying as: ${mode}`);
 
   // ---- plan the commands --------------------------------------------------
-  // The fp32 export always runs (it is the input the quantizer reads); for q4/q8
+  // The fp32 export always runs (it is the input the quantizer reads); for q8/q4
   // we additionally ask export_onnx.py to emit the quantized artifact.
   const exportArgs = [EXPORT_SCRIPT, '--run-dir', opts.runDir, '--opset', String(opts.opset)];
-  if (opts.mode === 'q4') exportArgs.push('--q4');
-  else if (opts.mode === 'q8') exportArgs.push('--quantize');
+  if (opts.mode === 'q8') exportArgs.push('--quantize');
+  else if (opts.mode === 'q4') exportArgs.push('--q4');
 
   if (opts.dryRun) {
     console.log('\n[deploy] --dry-run: planned commands (nothing executed):');
@@ -178,12 +178,12 @@ function main() {
     } else {
       console.log(`  $ ${python} ${exportArgs.join(' ')}`);
     }
-    const plannedModel = opts.mode === 'q8'
-      ? 'onnx/model_quantized.onnx'
+    const plannedModel = opts.mode === 'q4'
+      ? 'onnx/model_q4.onnx'
       : opts.mode === 'fp32'
         ? 'onnx/model.onnx'
-        : 'onnx/model_q4.onnx';
-    const plannedDtype = opts.mode === 'q8' ? 'q8' : opts.mode === 'fp32' ? 'fp32' : 'q4';
+        : 'onnx/model_quantized.onnx';
+    const plannedDtype = opts.mode === 'q4' ? 'q4' : opts.mode === 'fp32' ? 'fp32' : 'q8';
     const manifestArgs = [MANIFEST_SCRIPT, opts.runDir, '--dtype', plannedDtype, '--model-file', plannedModel];
     console.log(`  $ node ${manifestArgs.join(' ')}`);
     console.log('  then verify required files under public/models/1char/:');

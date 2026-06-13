@@ -4,19 +4,23 @@
 // artifact the manifest should point at, and which output files to verify — can
 // be unit-tested in isolation. The CLI wrapper supplies the side effects.
 
-export const DEFAULT_OPSET = 14;
+// opset 18 keeps LayerNormalization at a version onnxruntime can ingest without a
+// version-conversion pass. The older default (14) forced a downgrade that crashed
+// the ModernBERT export on LayerNormalization, so q8 production export now defaults
+// here.
+export const DEFAULT_OPSET = 18;
 
 // Parse argv (already sliced past `node script.js`) into a plain options object.
 // Throws on unknown flags so typos fail loudly instead of being silently ignored.
 //
-// Production is q4-only: with no mode flag the deploy produces and serves the
-// 4-bit weight-only model (onnx/model_q4.onnx, manifest dtype 'q4'). --dev-fp32
-// and --dev-q8 are NON-PRODUCTION escape hatches for local debugging only; they
-// are NOT a production fallback.
+// Production is q8-only: with no mode flag the deploy produces and serves the
+// int8-quantized model (onnx/model_quantized.onnx, manifest dtype 'q8').
+// --dev-fp32 and --dev-q4 are NON-PRODUCTION escape hatches for local debugging
+// only; they are NOT a production fallback.
 export function parseDeployArgs(argv) {
   const opts = {
     runDir: null,
-    mode: 'q4', // 'q4' (production) | 'q8' (dev) | 'fp32' (dev)
+    mode: 'q8', // 'q8' (production) | 'q4' (dev) | 'fp32' (dev)
     skipExport: false,
     dryRun: false,
     help: false,
@@ -27,8 +31,8 @@ export function parseDeployArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
-      case '--q4': opts.mode = 'q4'; break; // explicit production default, for clarity
-      case '--dev-q8': opts.mode = 'q8'; break; // dev only — int8 dynamic quant
+      case '--q8': opts.mode = 'q8'; break; // explicit production default, for clarity
+      case '--dev-q4': opts.mode = 'q4'; break; // dev only — 4-bit weight-only quant
       case '--dev-fp32': opts.mode = 'fp32'; break; // dev only — unquantized
       case '--skip-export': opts.skipExport = true; break;
       case '--dry-run': opts.dryRun = true; break;
@@ -52,18 +56,19 @@ export function parseDeployArgs(argv) {
 // transformers.js dtype hint, given the requested mode and which files exist on
 // disk. Throws (with an actionable message) when the requested artifact is absent.
 //
-// Production ('q4') REQUIRES onnx/model_q4.onnx and serves it as dtype 'q4'.
-// There is deliberately NO silent fall-through to fp32/q8: a missing q4 artifact
-// is a hard error. 'q8'/'fp32' are reachable only via the explicit dev flags.
-export function resolveModelArtifact({ mode = 'q4', q4Exists = false, fp32Exists = false, quantizedExists = false } = {}) {
-  if (mode === 'q8') {
-    if (!quantizedExists) {
+// Production ('q8') REQUIRES onnx/model_quantized.onnx and serves it as dtype
+// 'q8'. There is deliberately NO silent fall-through to fp32/q4: a missing q8
+// artifact is a hard error. 'q4'/'fp32' are reachable only via the explicit dev
+// flags.
+export function resolveModelArtifact({ mode = 'q8', q4Exists = false, fp32Exists = false, quantizedExists = false } = {}) {
+  if (mode === 'q4') {
+    if (!q4Exists) {
       throw new Error(
-        'dev q8 mode requested but onnx/model_quantized.onnx was not produced. '
-        + 'Re-run the export with --dev-q8 (q8 is a dev option, not production).',
+        'dev q4 mode requested but onnx/model_q4.onnx was not produced. '
+        + 'Re-run the export with --dev-q4 (q4 is a dev option, not production).',
       );
     }
-    return { modelFile: 'onnx/model_quantized.onnx', dtype: 'q8' };
+    return { modelFile: 'onnx/model_q4.onnx', dtype: 'q4' };
   }
   if (mode === 'fp32') {
     if (!fp32Exists) {
@@ -74,20 +79,20 @@ export function resolveModelArtifact({ mode = 'q4', q4Exists = false, fp32Exists
     }
     return { modelFile: 'onnx/model.onnx', dtype: 'fp32' };
   }
-  // Production: q4 only — no fp32/q8 fallback.
-  if (!q4Exists) {
+  // Production: q8 only — no fp32/q4 fallback.
+  if (!quantizedExists) {
     throw new Error(
-      'production q4 model onnx/model_q4.onnx was not found in public/models/1char/. '
-      + 'Re-run the export so the 4-bit artifact is produced (drop --skip-export), or '
-      + 'export the q4 asset there first. fp32/q8 are NOT a production fallback.',
+      'production q8 model onnx/model_quantized.onnx was not found in public/models/1char/. '
+      + 'Re-run the export so the int8 artifact is produced (drop --skip-export), or '
+      + 'export the q8 asset there first. fp32/q4 are NOT a production fallback.',
     );
   }
-  return { modelFile: 'onnx/model_q4.onnx', dtype: 'q4' };
+  return { modelFile: 'onnx/model_quantized.onnx', dtype: 'q8' };
 }
 
 // The browser asset set that Pages must publish for runtime inference. The
-// model file is parameterized because it is q4 (production), q8, or fp32 (dev).
-export function expectedAssets({ modelFile = 'onnx/model_q4.onnx' } = {}) {
+// model file is parameterized because it is q8 (production), q4, or fp32 (dev).
+export function expectedAssets({ modelFile = 'onnx/model_quantized.onnx' } = {}) {
   return {
     required: [
       'manifest.json',

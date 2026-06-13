@@ -8,8 +8,8 @@ function manifestWithInlineMap() {
     model: {
       name: 'ruri-v3-pt-30m-1char',
       runtime: 'onnx',
-      dtype: 'q4',
-      files: { model: 'model_q4.onnx', tokenizer: 'tokenizer.json' },
+      dtype: 'q8',
+      files: { model: 'model_quantized.onnx', tokenizer: 'tokenizer.json' },
       maxLength: 256,
       numLabels: 47,
     },
@@ -92,7 +92,7 @@ describe('createClassifier', () => {
     expect(totalCount).toBe(3);
   });
 
-  it('loads and infers with the q4 production manifest', async () => {
+  it('loads and infers with the q8 production manifest', async () => {
     let loadedManifest = null;
     const backendFactory = () => ({
       async load(manifest) {
@@ -113,8 +113,8 @@ describe('createClassifier', () => {
     await c.init();
     expect(c.available).toBe(true);
 
-    expect(loadedManifest.model.dtype).toBe('q4');
-    expect(loadedManifest.model.files.model).toBe('model_q4.onnx');
+    expect(loadedManifest.model.dtype).toBe('q8');
+    expect(loadedManifest.model.files.model).toBe('model_quantized.onnx');
 
     const result = await c.classifyPosts(['愛してる']);
     expect(result.mode).toBe('classifier');

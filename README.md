@@ -201,7 +201,7 @@ the label-set design.
 
 - **主返り値は `perPost`**: `classifier.classifyPosts()` は 1投稿ごとの `{ id, char, prob }` を返し、主描画はその配列をそのまま使用します。
 - **argmax のみ**: 閾値は使いません。各投稿は argmax で 1 文字に決定されます。
-- **成果物の置き場所**: エクスポートしたモデル一式は `public/models/1char/`（Vite が `/models/1char/` で配信）に置きます。アプリは実行時にここの `manifest.json` を fetch します。transformers.js 規約に従い、本番モデルは `onnx/model_q4.onnx`（dtype `q4`）、tokenizer 設定は直下に置きます。fp32（`onnx/model.onnx`）/ int8（`onnx/model_quantized.onnx`）は非本番の代替としてのみ扱います。
+- **成果物の置き場所**: エクスポートしたモデル一式は `public/models/1char/`（Vite が `/models/1char/` で配信）に置きます。アプリは実行時にここの `manifest.json` を fetch します。transformers.js 規約に従い、本番モデルは `onnx/model_quantized.onnx`（int8 / dtype `q8`）、tokenizer 設定は直下に置きます。fp32（`onnx/model.onnx`）/ 4bit（`onnx/model_q4.onnx`）は非本番の代替としてのみ扱います。
 - **エクスポート＆デプロイ（ワンコマンド・ハンドオフ）**: 学習 run からブラウザ成果物とマニフェストを一括生成・検証します。
 
   > **ブロッカー**: 学習済み run-dir（HF チェックポイント: `config.json` + `model.safetensors`）が必須です。リポジトリにはコミットされていないため、まず `finetune_smoke/train_production.py` で生成してください。生成されるブラウザ成果物（`public/models/1char/` 配下）は GitHub Pages 配信のためリポジトリで追跡し、**コミットします**（`.onnx` は Git LFS、config / tokenizer / manifest は通常の Git）。
@@ -209,9 +209,9 @@ the label-set design.
   ```bash
   # 追加依存（export 専用）を入れてから、検証 → export → manifest → ファイル検証を1コマンドで
   pip install -r finetune_smoke/requirements-export.txt
-  npm run model:deploy -- <train-output-run-dir>               # 本番 q4（manifest dtype q4 / onnx/model_q4.onnx）
+  npm run model:deploy -- <train-output-run-dir>               # 本番 q8（int8 / manifest dtype q8 / onnx/model_quantized.onnx）
   npm run model:deploy -- <train-output-run-dir> --dev-fp32    # fp32（非本番の代替 / 開発用のみ）
-  npm run model:deploy -- <train-output-run-dir> --dev-q8      # int8（非本番の代替 / 開発用のみ・manifest dtype q8）
+  npm run model:deploy -- <train-output-run-dir> --dev-q4      # 4bit（非本番の代替 / 開発用のみ・manifest dtype q4）
   npm run model:deploy -- <train-output-run-dir> --dry-run      # 実行せず手順だけ表示
   npm run model:deploy -- <train-output-run-dir> --skip-export # 既存 export の manifest 再生成のみ
   ```
@@ -219,12 +219,12 @@ the label-set design.
   `model:deploy` は内部で `finetune_smoke/export_onnx.py` と `scripts/build-model-manifest.js` を呼び、最後に必須ファイル（`manifest.json` / `onnx/model*.onnx` / `tokenizer.json` / `config.json`）が `public/models/1char/` に揃ったかを検証します。個別に実行したい場合:
 
   ```bash
-  # 本番（q4）
-  python3 finetune_smoke/export_onnx.py --run-dir <train-output-run-dir> --q4
-  npm run model:manifest <train-output-run-dir>   # 既定で --dtype q4 / --model-file onnx/model_q4.onnx
+  # 本番（q8 / int8）
+  python3 finetune_smoke/export_onnx.py --run-dir <train-output-run-dir> --quantize
+  npm run model:manifest <train-output-run-dir>   # 既定で --dtype q8 / --model-file onnx/model_quantized.onnx
   #   非本番の代替（開発用のみ）:
   #     fp32: `export_onnx.py` を素で実行 + `npm run model:manifest <run-dir> -- --dtype fp32 --model-file onnx/model.onnx`
-  #     int8: `export_onnx.py --quantize` + `npm run model:manifest <run-dir> -- --dtype q8 --model-file onnx/model_quantized.onnx`
+  #     4bit: `export_onnx.py --q4` + `npm run model:manifest <run-dir> -- --dtype q4 --model-file onnx/model_q4.onnx`
   ```
 
 詳細は [docs/1char-classification-design.md](docs/1char-classification-design.md) の §9「ブラウザ推論デプロイ計画」を参照してください。

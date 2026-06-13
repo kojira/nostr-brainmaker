@@ -4,12 +4,12 @@
     "name": "cl-nagoya/ruri-v3-pt-30m",
     "runtime": "transformers.js",
     "files": {
-      "model": "onnx/model_q4.onnx",
+      "model": "onnx/model_quantized.onnx",
       "tokenizer": "tokenizer.json"
     },
     "maxLength": 256,
     "numLabels": 47,
-    "dtype": "q4"
+    "dtype": "q8"
   },
   "metrics": {
     "macroF1": null,
