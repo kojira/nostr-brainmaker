@@ -12,9 +12,10 @@
 //   --tokenizer-file <p> tokenizer path (default 'tokenizer.json')
 //   --dtype <d>          optional backend hint, e.g. 'q8' for an int8 model
 //
-// NOTE: this only writes the manifest. The actual ONNX model + tokenizer binaries
-// must be exported/copied into public/models/1char/ separately — they are gitignored
-// and never committed. See finetune_smoke/export_onnx.py for the export path.
+// NOTE: this only writes the manifest. The actual ONNX model + tokenizer files
+// must already exist in public/models/1char/ (export/copy them there first).
+// The deployed repo now tracks the runtime assets needed by Pages, with .onnx
+// binaries stored through Git LFS.
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -92,9 +93,9 @@ function main() {
   console.log(`  numLabels: ${manifest.model.numLabels}`);
   console.log(`  modelFile: ${manifest.model.files.model}`);
   console.log('');
-  console.log('reminder: the ONNX model + tokenizer binaries referenced by this manifest');
-  console.log('must be exported/copied into public/models/1char/ separately. They are');
-  console.log('gitignored and never committed. Run finetune_smoke/export_onnx.py first.');
+  console.log('reminder: the ONNX model + tokenizer files referenced by this manifest');
+  console.log('must already exist in public/models/1char/. Run');
+  console.log('finetune_smoke/export_onnx.py first, then commit the updated artifacts.');
 }
 
 try {

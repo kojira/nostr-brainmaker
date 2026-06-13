@@ -354,12 +354,13 @@ Flags: `--quantize` (deploy `onnx/model_quantized.onnx` with `dtype q8`), `--fp3
 this repo**, so actual ONNX generation is gated on first running
 `finetune_smoke/train_production.py` (see "Training dataset export" above). Until
 then `model:deploy` stops at step 1 with an actionable error, and the browser app
-keeps using the heuristic fallback (`classifier.available === false`).
+surfaces the classifier as unavailable (`classifier.available === false`).
 
-**Binaries stay gitignored.** The ONNX/tokenizer/manifest files written under
-`public/models/1char/` are excluded by `.gitignore`; only that directory's
-`README.md` and `manifest.example.json` are tracked. This script produces those
-local-only artifacts and does **not** commit anything.
+**Runtime artifacts are committed for Pages.** The ONNX/tokenizer/manifest files
+written under `public/models/1char/` are part of the deployed site; `.onnx`
+binaries are tracked through Git LFS and the remaining runtime files are tracked
+normally. This script updates local artifacts; commit them when you refresh the
+deployed model.
 
 The pure decision logic (arg parsing, fp32-vs-q8 artifact selection, the
 verify file list) lives in `scripts/lib/deploy-browser-model.js` and is covered

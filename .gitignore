@@ -13,7 +13,18 @@ data/production/labels/**
 data/production/training/**
 data/pilot/**
 
-# Browser model artifacts (exported ONNX/tokenizer dropped here; never committed)
+# Browser model artifacts committed for Pages deployment.
 public/models/1char/*
 !public/models/1char/README.md
 !public/models/1char/manifest.example.json
+!public/models/1char/config.json
+!public/models/1char/label_map.json
+!public/models/1char/manifest.json
+!public/models/1char/special_tokens_map.json
+!public/models/1char/tokenizer.json
+!public/models/1char/tokenizer_config.json
+!public/models/1char/onnx/
+public/models/1char/onnx/*
+!public/models/1char/onnx/config.json
+!public/models/1char/onnx/model.onnx
+!public/models/1char/onnx/model_quantized.onnx

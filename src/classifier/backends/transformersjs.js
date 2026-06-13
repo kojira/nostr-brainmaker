@@ -8,7 +8,7 @@
 // The heavy library is imported lazily inside load() via a dynamic import, so:
 //   - it never inflates the bundle until a model is actually present, and
 //   - a missing/failed dependency just makes the backend throw on load(), which
-//     the adapter turns into 'unavailable' → heuristic fallback (non-breaking).
+//     the adapter turns into an explicit 'unavailable' state for the UI.
 //
 // Asset layout served from public/models/1char/ (Vite serves it at /models/1char/):
 //   config.json, tokenizer.json, tokenizer_config.json, special_tokens_map.json

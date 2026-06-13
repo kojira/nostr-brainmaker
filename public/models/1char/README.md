@@ -2,7 +2,7 @@
 
 このディレクトリは、ブラウザ推論用にエクスポートされた学習済み 1 文字分類器の成果物を置く場所です。
 
-アプリは実行時にここから `manifest.json` を読み込みます。`manifest.json` が存在しない場合、アプリはヒューリスティック（既存の語頻度ベース）にフォールバックします。
+アプリは実行時にここから `manifest.json` を読み込みます。`manifest.json` や依存ファイルが欠けている場合、アプリは分類器を `利用不可` として明示表示します。
 
 ## 想定されるファイル（transformers.js レイアウト）
 
@@ -14,10 +14,10 @@
 
 これらは `finetune_smoke/export_onnx.py` がまとめて出力します。
 
-## コミットしないこと
+## リポジトリで追跡するもの
 
-モデルバイナリ（ONNX / tokenizer など）は `.gitignore` で除外されており、リポジトリにはコミットしません。
-追跡されるのは `README.md` と `manifest.example.json` のみです。
+GitHub Pages へ学習済み分類器を配備するため、このディレクトリのランタイム成果物はリポジトリで追跡します。
+`onnx/*.onnx` は Git LFS で保存し、それ以外の設定・tokenizer・manifest は通常の Git で追跡します。
 
 ## スキーマと設計
 
@@ -28,7 +28,7 @@
 ## 推論バックエンド
 
 **transformers.js バックエンドはバンドル済み・登録済み**です（`src/classifier/backends/transformersjs.js`、`src/main.js` 起動時に `registerDefaultBackends()` で登録）。
-`@huggingface/transformers` の読み込みは「manifest が存在して `init()` が走るとき」だけ動的 import されるため、モデル未投入時はライブラリを取得せずヒューリスティックのままです。
+`@huggingface/transformers` の読み込みは「manifest が存在して `init()` が走るとき」だけ動的 import されるため、モデル未投入時はライブラリを取得しません。モデル未投入や破損時は UI に `利用不可` が表示されます。
 
 実際に推論を有効化する手順:
 
@@ -58,4 +58,4 @@ node scripts/build-model-manifest.js finetune_smoke/train-output/run-<ts>
 #   量子化版: node scripts/build-model-manifest.js <run-dir> --dtype q8 --model-file onnx/model_quantized.onnx
 ```
 
-これで `public/models/1char/` に `manifest.json` と成果物一式が揃い、`classifier.init()` が `ready` に到達して `classifyPosts()` が実推論を行います。これらのバイナリは gitignore 対象でコミットしません。
+これで `public/models/1char/` に `manifest.json` と成果物一式が揃い、`classifier.init()` が `ready` に到達して `classifyPosts()` が実推論を行います。更新後は Pages 配備のため成果物もコミットしてください（`.onnx` は Git LFS）。

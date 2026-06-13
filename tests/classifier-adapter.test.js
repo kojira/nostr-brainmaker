@@ -29,6 +29,25 @@ describe('createClassifier', () => {
     expect(c.reason).toMatch(/manifest/);
   });
 
+  it('captures an explicit reason when backend load fails', async () => {
+    const c = createClassifier({
+      fetchImpl: fetchReturning(manifestWithInlineMap()),
+      backendFactory: () => ({
+        async load() {
+          throw new Error('missing model artifact');
+        },
+        async infer() {
+          return [];
+        },
+        dispose() {},
+      }),
+    });
+    await c.init();
+    expect(c.available).toBe(false);
+    expect(c.state).toBe('unavailable');
+    expect(c.reason).toBe('missing model artifact');
+  });
+
   it('is unavailable when no backend factory is registered', async () => {
     const c = createClassifier({ fetchImpl: fetchReturning(manifestWithInlineMap()) });
     await c.init();

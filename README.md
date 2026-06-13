@@ -229,7 +229,7 @@ Deployment is automated via GitHub Actions (`.github/workflows/deploy.yml`):
 
 1. Push to `main`.
 2. In the repo: **Settings → Pages → Build and deployment → Source = GitHub Actions**.
-3. The workflow runs tests, builds with `BASE_PATH=/<repo-name>/`, and publishes `dist/`.
+3. The workflow runs tests, checks out Git LFS assets, builds with `BASE_PATH=/<repo-name>/`, verifies the required model artifacts under `dist/models/1char/`, and publishes `dist/`.
 
 The published URL is `https://<user>.github.io/<repo-name>/`.
 

@@ -300,10 +300,10 @@
   - `manifest.js` — `validateManifest` / `loadManifest` / `loadLabelMap`。`MANIFEST_SCHEMA_VERSION = 1`、`DEFAULT_MODEL_BASE = 'models/1char/'`。
   - `backend.js` — 推論バックエンド契約と注入レジストリ（`registerBackendFactory` / `resolveBackendFactory` / `createUnavailableBackend`）。実ランタイムはまだ未同梱。
   - `adapter.js` — `createClassifier()` シーム。状態 idle/ready/unavailable、`init()` / `classifyPosts(texts)`、getter `available` / `state` / `reason` / `manifest`。
-- **アプリ統合（`src/main.js`）**: 起動時に分類器を一度だけ非ブロッキング初期化。ヒューリスティック描画後、`classifier.available` のときのみ `classifyPosts(...)` を試行。失敗・不在時は無言でヒューリスティック経路を維持。メタカードに `分類モード:`（`学習済み分類器` / `ヒューリスティック`）を表示し、モデル実行時は `脳内ラベル（学習済み分類器）` のチップ行も表示。
-- **成果物の配置規約**: エクスポート物は `public/models/1char/`（Vite が `/models/1char/` で配信）に置く。実行時に `manifest.json` を fetch。`manifest.example.json` がスキーマ、`README.md` がディレクトリを文書化。`*.onnx` / `manifest.json` / トークナイザ等の実バイナリは gitignore で**コミットしない**。
+- **アプリ統合（`src/main.js`）**: 起動時に分類器を一度だけ非ブロッキング初期化。`classifier.available` のときのみ `classifyPosts(...)` を実行し、失敗・不在時は UI と console に `利用不可` / エラー理由を明示する。メタカードには `分類器:`（`学習済み分類器` / `利用不可`）を表示し、モデル実行時だけ `脳内ラベル（学習済み分類器）` のチップ行を表示する。
+- **成果物の配置規約**: エクスポート物は `public/models/1char/`（Vite が `/models/1char/` で配信）に置く。実行時に `manifest.json` を fetch。`manifest.example.json` がスキーマ、`README.md` がディレクトリを文書化する。Pages 配備のため runtime 成果物はリポジトリで追跡し、`*.onnx` は Git LFS で管理する。
 - **マニフェスト スキーマ v1**: `{ schemaVersion:1, model:{ name, runtime:'onnx'|'transformers.js', files:{ model, tokenizer, ... }, maxLength, numLabels }, labelMap(インライン) または labelMapPath, normalization, createdAt, metrics }`。ラベル id・文字は `data/production/label_map.json`（観測 46 ラベル id 0..45 ＋ QA 用 id 46 `分類不能`、実行時には**出力しない**）に由来。モデル出力 index === label id。
-- **推論バックエンド（transformers.js）同梱・登録済み**: `src/classifier/backends/transformersjs.js` が `createTransformersJsBackend(manifest)` と `registerDefaultBackends()` を提供。`src/main.js` 起動時に登録する。ruri-v3 の fast tokenizer（`tokenizer.json`）を transformers.js がそのまま読み、ONNX 推論（onnxruntime-web / WASM・WebGPU）まで一体で扱うため、JS 側で SentencePiece を再実装する必要がない。`@huggingface/transformers` は **`load()` 内で動的 import** されるため、モデル未投入時はライブラリを取得せずバンドルも汚さない（manifest 不在 → `unavailable` → 従来ヒューリスティック）。
+- **推論バックエンド（transformers.js）同梱・登録済み**: `src/classifier/backends/transformersjs.js` が `createTransformersJsBackend(manifest)` と `registerDefaultBackends()` を提供。`src/main.js` 起動時に登録する。ruri-v3 の fast tokenizer（`tokenizer.json`）を transformers.js がそのまま読み、ONNX 推論（onnxruntime-web / WASM・WebGPU）まで一体で扱うため、JS 側で SentencePiece を再実装する必要がない。`@huggingface/transformers` は **`load()` 内で動的 import** されるため、モデル未投入時はライブラリを取得せずバンドルも汚さない。manifest 不在や読み込み失敗時は `unavailable` として明示表示する。
   - アセット配置（transformers.js 規約）: `public/models/1char/` 直下に `config.json` / `tokenizer.json` / `tokenizer_config.json` / `special_tokens_map.json`、モデルは `onnx/model.onnx`（量子化版は `onnx/model_quantized.onnx` ＋ manifest `model.dtype:'q8'`）。
 - **エクスポート ハンドオフ ツール**:
   - `finetune_smoke/export_onnx.py` — 学習済み HF チェックポイント → ONNX（optimum 利用）＋ tokenizer ＋ `label_map.json` を `public/models/1char/` に書き出す。`--quantize` で int8 も出力。ONNX 用の追加依存は `finetune_smoke/requirements-export.txt`（既定の学習依存には含めない。未導入時は exit code 2 で導入コマンドを案内）。
@@ -311,7 +311,7 @@
 - **テスト**: tests/classifier-labelmap.test.js, tests/classifier-manifest.test.js, tests/classifier-adapter.test.js, tests/classifier-transformersjs.test.js（fake lib 注入で load/infer・dtype・欠落フォールバックを検証）, tests/model-manifest.test.js。
 
 **残ブロッカー（実モデル投入までに必要なこと）**:
-1. 実際の学習 run を回し、`finetune_smoke/export_onnx.py` で ONNX 化（環境に optimum 等の追加依存が要る）。バイナリは gitignore されコミットされない。
+1. 実際の学習 run を回し、`finetune_smoke/export_onnx.py` で ONNX 化（環境に optimum 等の追加依存が要る）。更新した成果物はコミットし、`*.onnx` は Git LFS で管理する。
 2. 前処理パリティの実検証（`normalize.js` ↔ 学習時前処理の一致をエクスポート済みトークナイザで確認）。
 3. 推論レイテンシ計測・モデルDLの Service Worker / IndexedDB キャッシュ検討。
 

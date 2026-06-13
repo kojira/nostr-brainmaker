@@ -20,6 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -30,6 +32,20 @@ jobs:
         run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+      - name: Verify model artifacts in Pages build
+        run: |
+          for file in \
+            dist/models/1char/manifest.json \
+            dist/models/1char/config.json \
+            dist/models/1char/label_map.json \
+            dist/models/1char/special_tokens_map.json \
+            dist/models/1char/tokenizer.json \
+            dist/models/1char/tokenizer_config.json \
+            dist/models/1char/onnx/config.json \
+            dist/models/1char/onnx/model.onnx
+          do
+            test -f "$file"
+          done
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./dist

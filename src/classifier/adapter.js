@@ -1,6 +1,6 @@
 // The integration seam between the browser app and a trained 1-char classifier.
-// Always graceful: if no manifest or no backend is present, it stays 'unavailable'
-// and the caller falls back to the heuristic render.
+// When model assets or the backend are unavailable, callers can surface that
+// explicit unavailable state instead of silently pretending classification ran.
 
 import { loadManifest, loadLabelMap } from './manifest.js';
 import { indexLabelMap, softmax, aggregateLabels } from './labelMap.js';

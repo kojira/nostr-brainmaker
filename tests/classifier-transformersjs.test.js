@@ -122,7 +122,7 @@ describe('createClassifier with transformers.js backend', () => {
     expect(result.labels[0].count).toBe(2);
   });
 
-  it('falls back to unavailable when the backend library is missing', async () => {
+  it('becomes unavailable when the backend library is missing', async () => {
     const c = createClassifier({
       fetchImpl: async () => ({ ok: true, json: async () => manifestTransformersJs() }),
       backendFactory: (manifest) =>
@@ -135,5 +135,6 @@ describe('createClassifier with transformers.js backend', () => {
     await c.init();
     expect(c.available).toBe(false);
     expect(c.state).toBe('unavailable');
+    expect(c.reason).toMatch(/transformers/);
   });
 });

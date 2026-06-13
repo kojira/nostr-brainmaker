@@ -64,13 +64,21 @@ export function resolveModelArtifact({ quantize = false, fp32Exists = false, qua
   return { modelFile: 'onnx/model.onnx', dtype: null };
 }
 
-// The browser asset set, split into hard requirements (deploy fails without them)
-// and recommended extras (transformers.js still works without, but warn). The
+// The browser asset set that Pages must publish for runtime inference. The
 // model file is parameterized because it is fp32 or quantized depending on mode.
 export function expectedAssets({ modelFile = 'onnx/model.onnx' } = {}) {
   return {
-    required: ['manifest.json', modelFile, 'tokenizer.json', 'config.json'],
-    recommended: ['tokenizer_config.json', 'special_tokens_map.json', 'label_map.json'],
+    required: [
+      'manifest.json',
+      'config.json',
+      'label_map.json',
+      'special_tokens_map.json',
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'onnx/config.json',
+      modelFile,
+    ],
+    recommended: [],
   };
 }
 

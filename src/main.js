@@ -17,13 +17,12 @@ const daysSel = $('days');
 
 let lastName = 'anonymous';
 
-// Optional trained-classifier seam. Stays 'unavailable' (heuristic fallback) until a
-// model manifest is dropped in public/models/1char/. The transformers.js backend is
-// registered up front, but its library is only imported once a manifest is present
-// (see backends/transformersjs.js), so this stays free when no model is deployed.
+// Optional trained-classifier seam. When model artifacts are missing or fail to
+// load we now surface that unavailable/error state explicitly instead of
+// pretending a heuristic classifier path succeeded.
 registerDefaultBackends();
 const classifier = createClassifier({ baseUrl: import.meta.env.BASE_URL });
-const classifierReady = classifier.init().catch(() => 'unavailable');
+const classifierReady = classifier.init();
 
 function setStatus(msg, kind = 'info') {
   statusEl.textContent = msg;
@@ -69,21 +68,33 @@ async function run() {
       footer: `${events.length} notes · ${days}d · nostr-brainmaker`,
     });
 
-    let classifyMode = 'heuristic';
+    let classifyMode = 'unavailable';
     let classification = null;
+    let classificationError = null;
     try {
-      await classifierReady;
-      if (classifier.available) {
+      const classifierState = await classifierReady;
+      if (classifierState === 'ready') {
         classification = await classifier.classifyPosts(events.map((e) => e.content));
         classifyMode = 'classifier';
+      } else {
+        classificationError = classifier.reason || 'model artifacts are unavailable';
+        console.error('classifier unavailable:', classificationError);
       }
     } catch (err) {
-      console.warn('classifier unavailable, using heuristic:', err);
+      classificationError = err?.message || String(err);
+      console.error('classifier failed:', err);
     }
 
-    setStatus(`完成！ ${events.length} 件のノートから ${model.terms.length} 語を可視化しました。`, 'ok');
+    if (classifyMode === 'classifier') {
+      setStatus(`完成！ ${events.length} 件のノートから ${model.terms.length} 語を可視化しました。`, 'ok');
+    } else {
+      setStatus(
+        `可視化は完了しましたが、学習済み分類器は利用できません: ${classificationError || 'unknown error'}`,
+        'warn',
+      );
+    }
     exportBtn.disabled = false;
-    describe({ pubkey, usedRelays, events, days, profile, model, classifyMode, classification });
+    describe({ pubkey, usedRelays, events, days, profile, model, classifyMode, classification, classificationError });
   } catch (err) {
     console.error(err);
     setStatus(err.message || String(err), 'error');
@@ -104,7 +115,7 @@ function renderEmpty() {
   ctx.fillText('ノートが見つかりませんでした', 500, 500);
 }
 
-function describe({ pubkey, usedRelays, events, days, profile, model, classifyMode = 'heuristic', classification = null }) {
+function describe({ pubkey, usedRelays, events, days, profile, model, classifyMode = 'unavailable', classification = null, classificationError = null }) {
   // The *requested* window — always the full N days, even on no-post days.
   const requestedRange = rangeLabel(days);
 
@@ -118,8 +129,11 @@ function describe({ pubkey, usedRelays, events, days, profile, model, classifyMo
     ? model.terms.slice(0, 12).map((t) => `<span class="chip" style="--c:${chipColor(t.category)}">${escapeHtml(t.term)} <b>${t.count}</b></span>`).join(' ')
     : '';
 
-  const modeLabel = classifyMode === 'classifier' ? '学習済み分類器' : 'ヒューリスティック';
-  const modeLine = `<li><b>分類モード:</b> ${escapeHtml(modeLabel)}${classification ? `（${classification.posts} 投稿を分類）` : ''}</li>`;
+  const modeLabel = classifyMode === 'classifier' ? '学習済み分類器' : '利用不可';
+  const modeLine = `<li><b>分類器:</b> ${escapeHtml(modeLabel)}${classification ? `（${classification.posts} 投稿を分類）` : ''}</li>`;
+  const errorLine = classifyMode === 'classifier' || !classificationError
+    ? ''
+    : `<li><b>分類器エラー:</b> ${escapeHtml(classificationError)}</li>`;
   const labelChips = classification && classification.labels.length
     ? classification.labels.slice(0, 10).map((l) => `<span class="chip">${escapeHtml(l.char)} <b>${l.count}</b></span>`).join(' ')
     : '';
@@ -131,6 +145,7 @@ function describe({ pubkey, usedRelays, events, days, profile, model, classifyMo
         <li><b>著者:</b> ${escapeHtml(profile?.display_name || profile?.name || '(プロフィール無し)')} <code>${escapeHtml(npubOf(pubkey))}</code></li>
         <li><b>ノート数:</b> ${events.length} 件（直近 ${days} 日間）</li>
         ${modeLine}
+        ${errorLine}
         <li><b>対象期間（直近 ${days} 日間）:</b> ${escapeHtml(requestedRange)}</li>
         ${activeLine}
         <li><b>問い合わせたリレー:</b><br>${usedRelays.map((r) => `<code>${escapeHtml(r)}</code>`).join(' ')}</li>

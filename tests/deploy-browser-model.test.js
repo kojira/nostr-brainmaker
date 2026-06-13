@@ -65,12 +65,17 @@ describe('resolveModelArtifact', () => {
 });
 
 describe('expectedAssets', () => {
-  it('lists the fp32 model among required files', () => {
+  it('lists the full fp32 runtime asset set as required', () => {
     const a = expectedAssets();
     expect(a.required).toContain('manifest.json');
+    expect(a.required).toContain('config.json');
+    expect(a.required).toContain('label_map.json');
+    expect(a.required).toContain('special_tokens_map.json');
     expect(a.required).toContain('onnx/model.onnx');
     expect(a.required).toContain('tokenizer.json');
-    expect(a.recommended).toContain('label_map.json');
+    expect(a.required).toContain('tokenizer_config.json');
+    expect(a.required).toContain('onnx/config.json');
+    expect(a.recommended).toEqual([]);
   });
 
   it('threads a custom (quantized) model file into required', () => {
@@ -114,6 +119,6 @@ describe('summarizeVerification', () => {
     const present = new Set(assets.required);
     const r = summarizeVerification(assets, (f) => present.has(f));
     expect(r.ok).toBe(true);
-    expect(r.missingRecommended).toContain('label_map.json');
+    expect(r.missingRecommended).toEqual([]);
   });
 });
