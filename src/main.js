@@ -105,6 +105,7 @@ function describe({ pubkey, usedRelays, events, days, profile, classification = 
     : '';
 
   const modeLine = `<li><b>分類器:</b> ${escapeHtml(classifier.manifest?.model?.name || 'unknown')}（${classification ? `${classification.posts} 投稿を分類` : '待機中'}）</li>`;
+  const errorLine = '';
   const labelList = classification && classification.labels.length
     ? classification.labels.map((label) => `<li><b>${escapeHtml(label.char)}</b> ${label.count} 件</li>`).join('')
     : '<li>分類対象の投稿はありません</li>';
